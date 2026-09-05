@@ -295,7 +295,12 @@ public class KillAura extends Module {
         }
 
         if (!isValidTargetEntity(target, false)) {
-            if (swingMisses) PlayerUtil.swingHand();
+            // Fallback: if raytrace missed but lastTarget is valid and in range, attack lastTarget
+            if (lastTarget != null && shouldAttackEntity(lastTarget) && isTargetInFOV(lastTarget)) {
+                executeAttack(lastTarget);
+            } else if (swingMisses) {
+                PlayerUtil.swingHand();
+            }
             return;
         }
 
@@ -437,7 +442,7 @@ public class KillAura extends Module {
     }
 
     public static boolean canSwingWhileBlocking() {
-        return (autoblockMode == AutoBlockMode.Basic || autoblockMode == AutoBlockMode.BlocksMC) && ModuleManager.isEnabled(KillAura.class) && isServerBlocking;
+        return (autoblockMode == AutoBlockMode.Basic || autoblockMode == AutoBlockMode.BlocksMC || autoblockMode == AutoBlockMode.Watchdog) && ModuleManager.isEnabled(KillAura.class) && isServerBlocking;
     }
 
     public static boolean tryBlock(boolean down) {
