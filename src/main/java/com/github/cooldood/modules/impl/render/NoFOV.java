@@ -7,7 +7,8 @@ import com.github.cooldood.modules.RegisterModule;
 @RegisterModule(
         name = "No FOV",
         description = "Provides No FOV functionality for the client.",
-        category = Category.RENDER
+        category = Category.RENDER,
+        enabledByDefault = true
 )
 public class NoFOV extends Module {
     @Override
