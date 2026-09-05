@@ -124,7 +124,7 @@ public class DraggableRenderer {
         if (file.exists()) {
             try {
                 draggingJSON = C.gson.fromJson(FileUtils.readFileToString(file), HashMap.class);
-            } catch (JsonSyntaxException | IOException e) {
+            } catch (Exception e) {
                 e.printStackTrace();
                 ChatUtil.prefixMessage("Failed to read previous positions json");
             }
