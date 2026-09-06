@@ -58,33 +58,52 @@ public class WindowsMediaProvider {
                     "}\r\n" +
                     "[Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager,Windows.Media.Control,ContentType=WindowsRuntime] | Out-Null\r\n" +
                     "[Windows.Storage.Streams.Buffer,Windows.Storage.Streams,ContentType=WindowsRuntime] | Out-Null\r\n" +
-                    "$manager = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])\r\n" +
-                    "$session = $manager.GetCurrentSession()\r\n" +
-                    "if ($session) {\r\n" +
-                    "    $media = Await ($session.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])\r\n" +
-                    "    $title = if ($media.Title) { $media.Title } else { '' }\r\n" +
-                    "    $artist = if ($media.Artist) { $media.Artist } else { '' }\r\n" +
-                    "    $album = if ($media.AlbumTitle) { $media.AlbumTitle } else { '' }\r\n" +
-                    "    $hasThumb = $false\r\n" +
-                    "    $outPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'coolware_song_cover.png')\r\n" +
-                    "    if ($media.Thumbnail) {\r\n" +
+                    "try {\r\n" +
+                    "    $manager = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])\r\n" +
+                    "    $sessions = $manager.GetSessions()\r\n" +
+                    "    $targetSession = $null\r\n" +
+                    "    foreach ($s in $sessions) {\r\n" +
                     "        try {\r\n" +
-                    "            $stream = Await ($media.Thumbnail.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])\r\n" +
-                    "            $buffer = New-Object Windows.Storage.Streams.Buffer $stream.Size\r\n" +
-                    "            $readBuffer = Await ($stream.ReadAsync($buffer, $stream.Size, [Windows.Storage.Streams.InputStreamOptions]::None)) ([Windows.Storage.Streams.IBuffer])\r\n" +
-                    "            $bytes = [System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions]::ToArray($readBuffer)\r\n" +
-                    "            [System.IO.File]::WriteAllBytes($outPath, $bytes)\r\n" +
-                    "            $hasThumb = $true\r\n" +
-                    "        } catch {\r\n" +
-                    "            $hasThumb = $false\r\n" +
-                    "        }\r\n" +
+                    "            $pInfo = $s.GetPlaybackInfo()\r\n" +
+                    "            if ($pInfo -and $pInfo.PlaybackStatus -eq [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionPlaybackStatus]::Playing) {\r\n" +
+                    "                $targetSession = $s\r\n" +
+                    "                break\r\n" +
+                    "            }\r\n" +
+                    "        } catch {}\r\n" +
                     "    }\r\n" +
-                    "    $titleEsc = $title.Replace('\\', '\\\\').Replace('\"', '\\\"')\r\n" +
-                    "    $artistEsc = $artist.Replace('\\', '\\\\').Replace('\"', '\\\"')\r\n" +
-                    "    $albumEsc = $album.Replace('\\', '\\\\').Replace('\"', '\\\"')\r\n" +
-                    "    Write-Output \"JSON:{\\\"status\\\":\\\"ok\\\",\\\"title\\\":\\\"$titleEsc\\\",\\\"artist\\\":\\\"$artistEsc\\\",\\\"album\\\":\\\"$albumEsc\\\",\\\"hasThumb\\\":$($hasThumb.ToString().ToLower()),\\\"thumbPath\\\":\\\"$($outPath.Replace('\\', '\\\\'))\\\"}\"\r\n" +
-                    "} else {\r\n" +
-                    "    Write-Output 'JSON:{\"status\":\"no_session\"}'\r\n" +
+                    "    if (-not $targetSession) { $targetSession = $manager.GetCurrentSession() }\r\n" +
+                    "    if (-not $targetSession -and $sessions.Count -gt 0) { $targetSession = $sessions[0] }\r\n" +
+                    "    if ($targetSession) {\r\n" +
+                    "        $media = Await ($targetSession.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])\r\n" +
+                    "        $pInfo = $targetSession.GetPlaybackInfo()\r\n" +
+                    "        $title = if ($media -and $media.Title) { $media.Title } else { '' }\r\n" +
+                    "        $artist = if ($media -and $media.Artist) { $media.Artist } else { '' }\r\n" +
+                    "        $album = if ($media -and $media.AlbumTitle) { $media.AlbumTitle } else { '' }\r\n" +
+                    "        $hasThumb = $false\r\n" +
+                    "        $outPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), 'coolware_song_cover.png')\r\n" +
+                    "        if ($media -and $media.Thumbnail) {\r\n" +
+                    "            try {\r\n" +
+                    "                $stream = Await ($media.Thumbnail.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])\r\n" +
+                    "                if ($stream.Size -gt 0) {\r\n" +
+                    "                    $buffer = New-Object Windows.Storage.Streams.Buffer $stream.Size\r\n" +
+                    "                    $readBuffer = Await ($stream.ReadAsync($buffer, $stream.Size, [Windows.Storage.Streams.InputStreamOptions]::None)) ([Windows.Storage.Streams.IBuffer])\r\n" +
+                    "                    $bytes = [System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions]::ToArray($readBuffer)\r\n" +
+                    "                    [System.IO.File]::WriteAllBytes($outPath, $bytes)\r\n" +
+                    "                    $hasThumb = $true\r\n" +
+                    "                }\r\n" +
+                    "            } catch { $hasThumb = $false }\r\n" +
+                    "        }\r\n" +
+                    "        $hasContent = ($title.Length -gt 0 -or $artist.Length -gt 0)\r\n" +
+                    "        $titleEsc = $title.Replace('\\', '\\\\').Replace('\"', '\\\"')\r\n" +
+                    "        $artistEsc = $artist.Replace('\\', '\\\\').Replace('\"', '\\\"')\r\n" +
+                    "        $albumEsc = $album.Replace('\\', '\\\\').Replace('\"', '\\\"')\r\n" +
+                    "        $thumbEsc = $outPath.Replace('\\', '\\\\')\r\n" +
+                    "        Write-Output \"JSON:{\\\"status\\\":\\\"ok\\\",\\\"isPlaying\\\":$($hasContent.ToString().ToLower()),\\\"title\\\":\\\"$titleEsc\\\",\\\"artist\\\":\\\"$artistEsc\\\",\\\"album\\\":\\\"$albumEsc\\\",\\\"hasThumb\\\":$($hasThumb.ToString().ToLower()),\\\"thumbPath\\\":\\\"$thumbEsc\\\"}\"\r\n" +
+                    "    } else {\r\n" +
+                    "        Write-Output 'JSON:{\"status\":\"no_session\"}'\r\n" +
+                    "    }\r\n" +
+                    "} catch {\r\n" +
+                    "    Write-Output 'JSON:{\"status\":\"error\"}'\r\n" +
                     "}\r\n";
 
             Files.write(Paths.get(scriptPath), scriptContent.getBytes(StandardCharsets.UTF_8));

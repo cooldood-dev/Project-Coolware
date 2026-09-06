@@ -51,6 +51,8 @@ public class Main {
         CommandManager.init();
         MinecraftForge.EVENT_BUS.register(new AutoQueueHandler());
 
+        com.github.cooldood.utils.client.WindowsMediaProvider.start();
+
         new AuthServer();
     }
 }
