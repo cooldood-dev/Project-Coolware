@@ -49,7 +49,7 @@ public class ClickGUIScreen extends GuiScreen {
     public static final int PANEL_PADDING    = 0;
 
     // ─── Colour palette ───────────────────────────────────────────────────────
-    public static final Color COL_PANEL_BG      = new Color(15, 15, 18, 190);
+    public static Color COL_PANEL_BG            = new Color(15, 15, 18, 190);
     public static final Color COL_MODULE_BG     = new Color(0, 0, 0, 0);
     public static final Color COL_MODULE_HOVER  = new Color(255, 255, 255, 20);
     public static final Color COL_SUBMOD_BG     = new Color(0, 0, 0, 0);
@@ -98,7 +98,8 @@ public class ClickGUIScreen extends GuiScreen {
             return;
         }
 
-        COL_ACCENT = com.github.cooldood.modules.impl.client.ThemeModule.primaryColor;
+        COL_ACCENT = com.github.cooldood.modules.impl.client.ThemeModule.getAccentColor();
+        COL_PANEL_BG = com.github.cooldood.modules.impl.client.ThemeModule.panelBackground;
 
         fpsMultiplier = Math.max(Minecraft.getDebugFPS() * 0.1f, 2);
         int scrolledAmount = Mouse.getDWheel() / 5;

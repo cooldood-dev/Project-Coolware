@@ -21,6 +21,16 @@ public abstract class AbstractClientPlayerMixin implements AbstractClientPlayerB
         if (ModuleManager.isEnabled(NoFOV.class)) cir.setReturnValue(1f);
     }
 
+    @Inject(at = @At("HEAD"), method = "getLocationCape", cancellable = true)
+    public void getLocationCape(CallbackInfoReturnable<net.minecraft.util.ResourceLocation> cir) {
+        if (ModuleManager.isEnabled(com.github.cooldood.modules.impl.render.Capes.class)) {
+            net.minecraft.client.entity.AbstractClientPlayer self = (net.minecraft.client.entity.AbstractClientPlayer) (Object) this;
+            if (self == com.github.cooldood.utils.client.C.p()) {
+                cir.setReturnValue(com.github.cooldood.modules.impl.render.Capes.getCapeResource());
+            }
+        }
+    }
+
     @Override
     public NetworkPlayerInfo bridge$getPlayerInfo() {
         return this.getPlayerInfo();

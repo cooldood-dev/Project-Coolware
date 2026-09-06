@@ -32,7 +32,14 @@ public class IconFont {
     public static final String STAR = "\uF005";
     public static final String COMPASS = "\uF14E";
 
-    private static final String GLYPHS = CLOCK + CALENDAR + HEART + CHART_BAR + CHEVRON_UP + PLAY_CIRCLE + TROPHY_FLAG + TARGET_CIRCLE + CROSS_CLOSE + STAR + COMPASS;
+    // Category Tab Icons
+    public static final String SWORD = "\uF05B";     // Crosshairs/Combat glyph
+    public static final String EYE = "\uF06E";       // Eye for Render
+    public static final String RUNNING = "\uF70C";   // Running / Movement
+    public static final String USER = "\uF007";      // User / Player
+    public static final String COG = "\uF013";       // Cog / Client
+
+    private static final String GLYPHS = CLOCK + CALENDAR + HEART + CHART_BAR + CHEVRON_UP + PLAY_CIRCLE + TROPHY_FLAG + TARGET_CIRCLE + CROSS_CLOSE + STAR + COMPASS + SWORD + EYE + RUNNING + USER + COG;
     private static final int X_SPACING = 8;
 
     private static final Graphics2D DUMMY_GRAPHICS = setAntiAliasing(new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB).createGraphics());

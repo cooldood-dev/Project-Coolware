@@ -63,7 +63,8 @@ public class HUD extends Module {
     public static Draggable coolwareWatermark = new Draggable(
             "CoolWareWatermark",
             () -> {
-                Color accent = ThemeModule.primaryColor;
+                Color accent = ThemeModule.getAccentColor();
+                Color panelBg = ThemeModule.panelBackground;
 
                 // ── Format Strings ────────────────────────────────────────────
                 String clientName = CLIENT_NAME;
@@ -98,7 +99,7 @@ public class HUD extends Module {
 
                 // ── Top Panel Render ──────────────────────────────────────────
                 // Dark rounded background
-                RenderUtil.drawRoundedRect(0, 0, topPanelW, topPanelH, CORNER_RAD, PANEL_BG);
+                RenderUtil.drawRoundedRect(0, 0, topPanelW, topPanelH, CORNER_RAD, panelBg);
 
                 // Content inside Top Panel
                 float topContentY = PAD_Y;
@@ -150,7 +151,7 @@ public class HUD extends Module {
                 float bottomPanelY = topPanelH + ROW_GAP;
 
                 // ── Bottom Panel Render ───────────────────────────────────────
-                RenderUtil.drawRoundedRect(0, bottomPanelY, bottomPanelW, bottomPanelH, CORNER_RAD, PANEL_BG);
+                RenderUtil.drawRoundedRect(0, bottomPanelY, bottomPanelW, bottomPanelH, CORNER_RAD, panelBg);
 
                 float bContentY = bottomPanelY + PAD_Y;
                 float bCurX = PAD_X;

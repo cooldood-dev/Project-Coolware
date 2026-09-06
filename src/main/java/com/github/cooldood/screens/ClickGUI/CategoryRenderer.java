@@ -24,10 +24,17 @@ public class CategoryRenderer {
         String name = category.name().replaceAll("_", " ");
         String categoryName = name.substring(0, 1).toUpperCase() + name.substring(1).toLowerCase();
         float textH = FontUtil.getFontHeight(ClickGUIScreen.fontSize);
-        float textX = ClickGUIScreen.BASE_X + 8f; // Left-aligned
+        float curX = ClickGUIScreen.BASE_X + 8f; // Left-aligned
         float textY = ClickGUIScreen.BASE_Y + CATEGORY_HEIGHT / 2f - textH / 2f + 1f;
 
-        FontUtil.drawString(categoryName, textX, textY, ClickGUIScreen.fontSize, Color.WHITE, true);
+        if (category.icon != null && !category.icon.isEmpty()) {
+            float iconSize = ClickGUIScreen.fontSize;
+            float iconOffsetY = ClickGUIScreen.BASE_Y + CATEGORY_HEIGHT / 2f - iconSize / 2f;
+            com.github.cooldood.utils.render.IconFont.drawIcon(category.icon, curX, iconOffsetY, (int) iconSize, ClickGUIScreen.COL_ACCENT);
+            curX += com.github.cooldood.utils.render.IconFont.getWidth(category.icon, (int) iconSize) + 5f;
+        }
+
+        FontUtil.drawString(categoryName, curX, textY, ClickGUIScreen.fontSize, Color.WHITE, true);
 
         // Small arrow on the right indicating open/closed
         float arrowX = ClickGUIScreen.BASE_X + ClickGUIScreen.GUI_TAB_WIDTH - 14;
