@@ -11,7 +11,8 @@ import com.github.cooldood.utils.render.draggable.DraggableRenderer;
 import com.google.gson.internal.LinkedTreeMap;
 import org.apache.commons.io.FileUtils;
 
-import java.awt.*;
+import com.github.cooldood.utils.client.PlatformUtil;
+import java.awt.Color;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -133,7 +134,7 @@ public class ModuleManager {
     public static void openConfigFolder() {
         try {
             Files.createDirectories(Paths.get(Main.configPath));
-            Desktop.getDesktop().open(new File(Main.configPath));
+            PlatformUtil.openFile(new File(Main.configPath));
         } catch (IOException e) {
             throw new RuntimeException(e);
         }

@@ -5,6 +5,7 @@ import com.github.cooldood.utils.alts.Login;
 import com.github.cooldood.utils.alts.SessionUtil;
 import com.github.cooldood.utils.client.C;
 import com.github.cooldood.utils.client.FileChooserUtil;
+import com.github.cooldood.utils.client.PlatformUtil;
 import com.github.cooldood.utils.client.ScreenUtil;
 import com.github.cooldood.utils.render.FontUtil;
 import com.github.cooldood.utils.render.RenderUtil;
@@ -246,7 +247,7 @@ public class AltManagerScreen extends GuiScreen {
         // Open Alts Folder
         if (drawModernButton(btnX, btnY, btnWidth, btnHeight, "Open Alts Folder", "Open JSON directory", new Color(130, 130, 140), mX, mY)) {
             try {
-                Desktop.getDesktop().open(Login.altsPath.toFile());
+                PlatformUtil.openFile(Login.altsPath.toFile());
                 setStatus("Opened alts directory", false);
             } catch (Exception e) {
                 setStatus("Could not open folder: " + e.getMessage(), true);

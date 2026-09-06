@@ -16,6 +16,7 @@ import com.github.cooldood.utils.client.C;
 import com.github.cooldood.utils.client.FileChooserUtil;
 import com.github.cooldood.utils.client.FrameUtil;
 import com.github.cooldood.utils.client.NetworkUtil;
+import com.github.cooldood.utils.client.PlatformUtil;
 import com.github.cooldood.utils.minecraft.ChatUtil;
 import com.google.gson.JsonObject;
 import lombok.AllArgsConstructor;
@@ -116,7 +117,7 @@ public class Login {
         }),
         Open_Folder("Open Folder", "§4", "opens the alts folder", () -> {
             try {
-                Desktop.getDesktop().open(altsPath.toFile());
+                PlatformUtil.openFile(altsPath.toFile());
             } catch (Exception e) {
                 setErrorMessage("Invalid clipboard data, please copy email:password to clipboard!");
             }

@@ -5,8 +5,20 @@ CoolWare is a Minecraft Forge 1.8.9 client built from the ScaleHack/Coolware cod
 ## Requirements
 
 - Java 8 JDK
-- Windows recommended for the bundled Gradle and Forge setup
 - Minecraft Forge 1.8.9 compatible launcher profile
+
+## Supported Platforms
+
+CoolWare is pure Java and runs on any platform that supports Minecraft Forge 1.8.9:
+
+| OS | Architecture | Status |
+|----|-------------|--------|
+| Windows | x86_64 | ✅ Fully supported |
+| Windows | ARM64 | ✅ Supported (via x64 emulation) |
+| macOS | x86_64 (Intel) | ✅ Fully supported |
+| macOS | ARM64 (Apple Silicon) | ✅ Supported (via Rosetta 2 or native ARM JDK) |
+| Linux | x86_64 | ✅ Fully supported |
+| Linux | ARM64 / aarch64 | ✅ Supported (requires ARM64 LWJGL 2 natives in your Minecraft install) |
 
 ## Setup
 
@@ -15,8 +27,15 @@ CoolWare is a Minecraft Forge 1.8.9 client built from the ScaleHack/Coolware cod
 3. Set your `JAVA_HOME` to the Java 8 JDK path.
 4. Run a Gradle build:
 
+**Windows:**
 ```bash
 gradlew.bat build
+```
+
+**Linux / macOS:**
+```bash
+chmod +x gradlew
+./gradlew build
 ```
 
 5. Find the built jar in:
@@ -57,6 +76,7 @@ Use this prompt if you want another AI to help build or modify the client:
 > - When adding modules, commands, or handlers, wire them into the existing architecture instead of introducing a parallel framework.
 > - Keep changes clean, buildable, and consistent with the current code style.
 > - If a change touches gameplay logic, verify it by building the jar and fixing compile errors before finishing.
+> - Ensure all code is cross-platform (no OS-specific APIs without fallbacks). Use `PlatformUtil` for opening files/URLs.
 >
 > Useful project entrypoints:
 > - `src/main/java/com/github/cooldood/Main.java`
@@ -66,7 +86,7 @@ Use this prompt if you want another AI to help build or modify the client:
 >
 > Build target:
 > - Produce a clean jar for Minecraft Forge 1.8.9.
-> - Keep the archive name consistent with the project’s Gradle configuration.
+> - Keep the archive name consistent with the project's Gradle configuration.
 
 ## Disclaimer
 

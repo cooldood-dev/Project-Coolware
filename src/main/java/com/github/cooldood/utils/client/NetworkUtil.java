@@ -8,9 +8,7 @@ import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.util.EntityUtils;
 
-import java.awt.*;
 import java.io.IOException;
-import java.net.URI;
 
 public class NetworkUtil {
     public static final CloseableHttpClient client =
@@ -22,12 +20,7 @@ public class NetworkUtil {
 
     // minecraft code i stole from GuiStreamUnavailable.func_152320_a
     public static void openBrowser(String websiteURL) {
-        try {
-            Desktop.getDesktop().browse(new URI(websiteURL));
-        }
-        catch (Throwable throwable) {
-            throwable.printStackTrace();
-        }
+        PlatformUtil.openBrowser(websiteURL);
     }
 
     public static CloseableHttpResponse getServerResponse(HttpRequestBase request) throws IOException {
