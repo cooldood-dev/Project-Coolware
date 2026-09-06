@@ -109,9 +109,7 @@ public class ModuleManager {
     }
 
     public static List<Module> getModules() {
-        return new ArrayList<>(modules.values()).stream()
-                .filter(m -> !(m instanceof com.github.cooldood.modules.impl.client.ThemeModule))
-                .collect(Collectors.toList());
+        return new ArrayList<>(modules.values());
     }
 
     public static List<Module> getModulesByCategory(Category category) {
