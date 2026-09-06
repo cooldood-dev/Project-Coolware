@@ -71,6 +71,9 @@ dependencies {
 
     // need for commands and any other searching things, long live fuzzysearch
     addLibrary "me.xdrop:fuzzywuzzy:1.4.0"
+
+    // MP3 playback support for Mommy module and audio
+    addLibrary "com.googlecode.soundlibs:jlayer:1.0.1.4"
 }
 
 
