@@ -12,7 +12,6 @@ import net.minecraft.network.play.server.S02PacketChat;
 import net.minecraft.network.play.server.S45PacketTitle;
 import net.minecraft.util.EnumChatFormatting;
 
-import java.util.Arrays;
 import java.util.regex.Pattern;
 
 @RegisterModule(
@@ -36,17 +35,6 @@ public class Mommy extends Module {
     private static long lastBedTime = 0;
     private static long lastVictoryTime = 0;
 
-    // Trigger phrases for Hypixel kills where local player is the killer
-    private static final String[] KILL_TRIGGERS = {
-            "by *", "para *", "fue destrozado a manos de *",
-            "was killed by *", "was slain by *", "was knocked into the void by *",
-            "was thrown into the void by *", "was shoved into the void by *",
-            "was pushed into the void by *", "was thrown off a cliff by *",
-            "was struck down by *", "was obliterated by *",
-            "was roasted in the flames by *", "beaten into a pulp by *",
-            "died in close combat with *", "could not escape *"
-    };
-
     // Trigger patterns for Hypixel victories
     private static final Pattern WIN_MESSAGE_PATTERN = Pattern.compile(
             "(?i).*\\b(1st place!?|#1!?|victory!?|winner!?|won the game|you won(?: the game)?|team wins!?|hypixel victory)\\b.*"
@@ -64,7 +52,7 @@ public class Mommy extends Module {
 
             if (message == null || message.trim().isEmpty()) return;
 
-            String playerName = C.mc.thePlayer.getName();
+            String myName = C.p().getName();
             long now = System.currentTimeMillis();
 
             // 1. Check Victory / Win
@@ -80,9 +68,8 @@ public class Mommy extends Module {
             // 2. Check Own Bed Break
             if (bedBreakSound && (now - lastBedTime > 2000)) {
                 String upper = message.toUpperCase();
-                // Check if Hypixel bed destruction message indicates own break
                 if (upper.contains("BED DESTRUCTION") || upper.contains("BED WAS DESTROYED")) {
-                    if (message.contains("by " + playerName) || message.contains("by " + playerName + "!")) {
+                    if (message.contains("by " + myName) || message.contains("to " + myName) || message.contains("by " + myName + "!")) {
                         lastBedTime = now;
                         playBedSound();
                         return;
@@ -90,30 +77,12 @@ public class Mommy extends Module {
                 }
             }
 
-            // 3. Check Own Kills
+            // 3. Check Own Kills (Exact detection mechanism from Killsults module)
             if (killSound && (now - lastKillTime > 500)) {
-                if (!message.contains(":")) {
-                    boolean isOwnKill = false;
-
-                    // Direct "You have killed <player>" or "FINAL KILL" containing player name as killer
-                    if (message.startsWith("You have killed ")) {
-                        isOwnKill = true;
-                    } else if (message.contains(playerName)) {
-                        // Check if player is the killer at the end of the death phrase
-                        for (String trigger : KILL_TRIGGERS) {
-                            String check = trigger.replace("*", playerName);
-                            if (message.endsWith(check) || message.endsWith(check + "!") || message.contains(check + " (FINAL KILL)")) {
-                                isOwnKill = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (isOwnKill) {
-                        lastKillTime = now;
-                        playKillSound();
-                        return;
-                    }
+                if (message.contains("by " + myName) || message.contains("to " + myName) || message.startsWith("You have killed ")) {
+                    lastKillTime = now;
+                    playKillSound();
+                    return;
                 }
             }
         }

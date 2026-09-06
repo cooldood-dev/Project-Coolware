@@ -14,7 +14,16 @@ public class SoundUtil {
         new Thread(() -> {
             try {
                 InputStream is = SoundUtil.class.getResourceAsStream(resourcePath);
-                if (is == null) return;
+                if (is == null) {
+                    is = SoundUtil.class.getClassLoader().getResourceAsStream(resourcePath.startsWith("/") ? resourcePath.substring(1) : resourcePath);
+                }
+                if (is == null) {
+                    is = Thread.currentThread().getContextClassLoader().getResourceAsStream(resourcePath.startsWith("/") ? resourcePath.substring(1) : resourcePath);
+                }
+                if (is == null) {
+                    System.err.println("[CoolWare Sound] Sound resource not found: " + resourcePath);
+                    return;
+                }
 
                 if (resourcePath.toLowerCase().endsWith(".mp3")) {
                     try (BufferedInputStream bis = new BufferedInputStream(is)) {
@@ -34,8 +43,9 @@ public class SoundUtil {
                     });
                 }
             } catch (Exception e) {
+                System.err.println("[CoolWare Sound] Failed to play sound: " + resourcePath);
                 e.printStackTrace();
             }
-        }).start();
+        }, "CoolWare-SoundThread").start();
     }
 }
