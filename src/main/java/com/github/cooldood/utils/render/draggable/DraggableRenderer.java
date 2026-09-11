@@ -36,8 +36,10 @@ public class DraggableRenderer {
 
     @SubscribeEvent
     public static void drawDraggables(RenderTickEvent event) {
-        
-        // Glow / PostProcessing Pass
+        // Refresh ScaledResolution once per frame — avoids new ScaledResolution() per draggable
+        C.updateResCache();
+
+        // Cache module checks — two HashMap lookups done once instead of once per frame per pass
         boolean glowEnabled = ModuleManager.isEnabled(com.github.cooldood.modules.impl.client.GlowModule.class);
         boolean postEnabled = ModuleManager.isEnabled(com.github.cooldood.modules.impl.client.PostProcessing.class);
 
@@ -59,24 +61,29 @@ public class DraggableRenderer {
                     GL11.glPopMatrix();
                 } catch (Exception e) {}
             }
-            
+
             KawaseBloom.framebuffer.unbindFramebuffer();
             int iter = glowEnabled ? (int) Math.max(1, com.github.cooldood.modules.impl.client.GlowModule.intensity) : (int) Math.max(1, com.github.cooldood.modules.impl.client.PostProcessing.iterations);
-            int off = glowEnabled ? (int) Math.max(1, com.github.cooldood.modules.impl.client.GlowModule.radius) : (int) Math.max(1, com.github.cooldood.modules.impl.client.PostProcessing.offset);
+            int off  = glowEnabled ? (int) Math.max(1, com.github.cooldood.modules.impl.client.GlowModule.radius)    : (int) Math.max(1, com.github.cooldood.modules.impl.client.PostProcessing.offset);
             KawaseBloom.renderBlur(KawaseBloom.framebuffer.framebufferTexture, iter, off);
             C.mc.getFramebuffer().bindFramebuffer(false);
             isBloom = false;
         }
 
-
         // Normal Pass
+        boolean drag = canDrag();  // evaluate once, not per-draggable
+        int sw = C.res().getScaledWidth();
+        int sh = C.res().getScaledHeight();
+        double mouseX = drag ? ScreenUtil.getMouseX() : 0.0;
+        double mouseY = drag ? ScreenUtil.getMouseY() : 0.0;
+
         for (Draggable draggable : draggables) {
             if (!shouldRender(draggable)) continue;
 
             try {
-                int renderX = (int) (draggable.x * C.res().getScaledWidth());
-                int renderY = (int) (draggable.y * C.res().getScaledHeight());
-                
+                int renderX = (int) (draggable.x * sw);
+                int renderY = (int) (draggable.y * sh);
+
                 if (draggable.anchor == Draggable.Anchor.RIGHT) {
                     renderX -= draggable.width;
                 }
@@ -85,14 +92,17 @@ public class DraggableRenderer {
                 GL11.glTranslated(renderX, renderY, 0);
                 double[] size = draggable.render.call();
                 GL11.glPopMatrix();
-                draggable.width = size[0];
+                draggable.width  = size[0];
                 draggable.height = size[1];
 
-                if (canDrag()) {
-                    boolean isHovered = ScreenUtil.getMouseX() >= renderX && ScreenUtil.getMouseX() <= renderX + size[0] 
-                                     && ScreenUtil.getMouseY() >= renderY && ScreenUtil.getMouseY() <= renderY + size[1];
+                if (drag) {
+                    boolean isHovered = mouseX >= renderX && mouseX <= renderX + size[0]
+                                     && mouseY >= renderY && mouseY <= renderY + size[1];
 
-                    draggingCoords = dragging == null ? new Rectangle((int) ScreenUtil.getMouseX() - renderX, (int) ScreenUtil.getMouseY() - renderY) : draggingCoords;
+                    // Only allocate draggingCoords when we actually start a new drag
+                    if (dragging == null && draggingCoords == null) {
+                        draggingCoords = new Rectangle((int) mouseX - renderX, (int) mouseY - renderY);
+                    }
 
                     if (dragging == draggable) {
                         GL11.glPushMatrix();
@@ -100,14 +110,14 @@ public class DraggableRenderer {
                         RenderUtil.drawRectOutline(0, 0, size[0], size[1], 1, Color.WHITE);
                         GL11.glPopMatrix();
 
-                        double newX = ScreenUtil.getMouseX() - draggingCoords.width;
+                        double newX = mouseX - draggingCoords.width;
                         if (draggable.anchor == Draggable.Anchor.RIGHT) newX += size[0];
-                        draggable.x = newX / C.res().getScaledWidth();
-                        
-                        draggable.y = (ScreenUtil.getMouseY() - draggingCoords.height) / C.res().getScaledHeight();
+                        draggable.x = newX / sw;
+                        draggable.y = (mouseY - draggingCoords.height) / sh;
                     }
 
-                    dragging = Mouse.isButtonDown(0) ? dragging == null && isHovered ? draggable : dragging : null;
+                    dragging = Mouse.isButtonDown(0) ? (dragging == null && isHovered ? draggable : dragging) : null;
+                    if (dragging == null) draggingCoords = null; // release allocation when drag ends
                 }
 
             } catch (Exception e) {

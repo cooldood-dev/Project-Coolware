@@ -88,6 +88,24 @@ public class HUD extends Module {
     // ── Smooth width animation state for Dynamic Island ───────────────────────
     private static float animatedIslandWidth = 0;
 
+    // ── Preallocated Dynamic Island visual constants ───────────────────────────
+    private static final Color DI_SHADOW    = new Color(0, 0, 0, 55);
+    private static final Color DI_BORDER    = new Color(255, 255, 255, 18);
+    private static final Color DI_BG        = new Color(12, 12, 15, 225);
+    private static final Color DI_SHEEN     = new Color(255, 255, 255, 30);
+    private static final Color DI_DIVIDER   = new Color(80, 80, 95, 160);
+    private static final Color DI_PING_GOOD = new Color(120, 255, 160);
+    private static final Color DI_PING_BAD  = new Color(255, 100, 100);
+    private static final Color DI_TIME_TXT  = new Color(155, 155, 168, 255);
+
+    // Cache string formats to prevent string builder / GC thrash every frame
+    private static int lastFpsCache = -1;
+    private static String cachedFpsStr = "";
+    private static int lastPingCache = -1;
+    private static String cachedPingStr = "";
+    private static long lastTimeCacheMs = 0;
+    private static String cachedTimeStr = "";
+
     private static double[] renderDynamicIsland() {
         Color accent = ThemeModule.primaryColor;
 
@@ -95,37 +113,45 @@ public class HUD extends Module {
         int fps = C.mc.getDebugFPS();
         int ping = getPing();
 
-        // Data strings — layout order: clientName | ping | fps | mods | time | server
+        if (fps != lastFpsCache) {
+            lastFpsCache = fps;
+            cachedFpsStr = fps + " FPS";
+        }
+        if (ping != lastPingCache) {
+            lastPingCache = ping;
+            cachedPingStr = ping + "ms";
+        }
+        long nowMs = System.currentTimeMillis();
+        if (nowMs - lastTimeCacheMs > 1000 || cachedTimeStr.isEmpty()) {
+            lastTimeCacheMs = nowMs;
+            cachedTimeStr = TIME_FORMAT.format(new Date(nowMs));
+        }
+
         String serverStr = C.mc.isSingleplayer() ? "Singleplayer" : (C.mc.getCurrentServerData() != null ? C.mc.getCurrentServerData().serverIP : "Offline");
-        String pingStr   = ping + "ms";
-        String fpsStr    = fps + " FPS";
-        long enabledModsCount = ModuleManager.getModules().stream().filter(m -> m.isEnabled() && !m.hide).count();
-        String modsStr   = enabledModsCount + " Mods";
-        Date now = new Date();
-        String timeStr   = TIME_FORMAT.format(now);
+        String pingStr   = cachedPingStr;
+        String fpsStr    = cachedFpsStr;
+        String timeStr   = cachedTimeStr;
 
         // ── Measure ────────────────────────────────────────────────────────────
         float fontH   = FontUtil.getFontHeight(FONT_SIZE);
         float divH    = fontH * 0.55f;
 
-        float logoW    = fontH + 4f;           // badge: square slightly wider than font
+        float logoW    = fontH + 4f;
         float clientW  = FontUtil.getStringWidth(clientName, FONT_SIZE);
         float pingW    = FontUtil.getStringWidth(pingStr,    FONT_SIZE);
         float fpsW     = FontUtil.getStringWidth(fpsStr,     FONT_SIZE);
-        float modsW    = FontUtil.getStringWidth(modsStr,    FONT_SIZE);
         float timeW    = FontUtil.getStringWidth(timeStr,    FONT_SIZE);
         float serverW  = FontUtil.getStringWidth(serverStr,  FONT_SIZE);
 
         float itemGap  = 12f;
         float divGap   = 9f;
 
-        // [logo] gap [clientName] div [ping] div [fps] div [mods] div [time] div [server]
+        // [logo] gap [clientName] div [ping] div [fps] div [time] div [server]
         float targetContentWidth =
                 logoW + itemGap
                 + clientW  + divGap + 1f + divGap
                 + pingW    + divGap + 1f + divGap
                 + fpsW     + divGap + 1f + divGap
-                + modsW    + divGap + 1f + divGap
                 + timeW    + divGap + 1f + divGap
                 + serverW;
 
@@ -143,61 +169,53 @@ public class HUD extends Module {
         float islandW = animatedIslandWidth;
 
         // ── Background: Dark Charcoal Glass Pill ──────────────────────────────
-        // Layered shadow → border → body → top sheen
-        RenderUtil.drawRoundedRect(-2f, 0f,  islandW + 4f, islandH + 3f, pillRadius + 2f, new Color(0, 0, 0, 55));  // ambient shadow
-        RenderUtil.drawRoundedRect(-1f, -1f, islandW + 2f, islandH + 2f, pillRadius + 1f, new Color(255, 255, 255, 18)); // thin border ring
-        RenderUtil.drawRoundedRect(0f,  0f,  islandW,      islandH,      pillRadius,      new Color(12, 12, 15, 225)); // pill body
-        RenderUtil.drawRoundedRect(pillRadius, 0.8f, islandW - pillRadius * 2f, 0.75f, 0.4f, new Color(255, 255, 255, 30)); // top sheen
+        RenderUtil.drawRoundedRect(-2f, 0f,  islandW + 4f, islandH + 3f, pillRadius + 2f, DI_SHADOW);
+        RenderUtil.drawRoundedRect(-1f, -1f, islandW + 2f, islandH + 2f, pillRadius + 1f, DI_BORDER);
+        RenderUtil.drawRoundedRect(0f,  0f,  islandW,      islandH,      pillRadius,      DI_BG);
+        RenderUtil.drawRoundedRect(pillRadius, 0.8f, islandW - pillRadius * 2f, 0.75f, 0.4f, DI_SHEEN);
 
         // ── Content ───────────────────────────────────────────────────────────
         float curX    = padX;
         float contentY = padY;
         float divY    = contentY + (fontH - divH) / 2f;
 
-        // Logo badge (accent-tinted square with client initial)
+        // Logo badge
         Color badgeBg = new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 45);
         RenderUtil.drawRoundedRect(curX, contentY - 0.5f, logoW, fontH + 1f, 3.5f, badgeBg);
         String initial = clientName.substring(0, 1);
         FontUtil.drawString(initial, curX + (logoW - FontUtil.getStringWidth(initial, FONT_SIZE)) / 2f, contentY, FONT_SIZE, accent, true);
         curX += logoW + itemGap;
 
-        // 1. Client Name — accent, full brightness (brand anchor)
+        // 1. Client Name
         FontUtil.drawString(clientName, curX, contentY, FONT_SIZE, accent, false);
         curX += clientW + divGap;
 
-        RenderUtil.drawRect(curX, divY, 0.75f, divH, new Color(80, 80, 95, 160));
+        RenderUtil.drawRect(curX, divY, 0.75f, divH, DI_DIVIDER);
         curX += 0.75f + divGap;
 
-        // 2. Ping — white / accent-tinted based on latency
-        Color pingColor = ping < 80 ? new Color(120, 255, 160) : ping < 200 ? Color.WHITE : new Color(255, 100, 100);
+        // 2. Ping
+        Color pingColor = ping < 80 ? DI_PING_GOOD : (ping < 200 ? Color.WHITE : DI_PING_BAD);
         FontUtil.drawString(pingStr, curX, contentY, FONT_SIZE, pingColor, false);
         curX += pingW + divGap;
 
-        RenderUtil.drawRect(curX, divY, 0.75f, divH, new Color(80, 80, 95, 160));
+        RenderUtil.drawRect(curX, divY, 0.75f, divH, DI_DIVIDER);
         curX += 0.75f + divGap;
 
-        // 3. FPS — white, crisp
+        // 3. FPS
         FontUtil.drawString(fpsStr, curX, contentY, FONT_SIZE, Color.WHITE, false);
         curX += fpsW + divGap;
 
-        RenderUtil.drawRect(curX, divY, 0.75f, divH, new Color(80, 80, 95, 160));
+        RenderUtil.drawRect(curX, divY, 0.75f, divH, DI_DIVIDER);
         curX += 0.75f + divGap;
 
-        // 4. Mods count — muted secondary
-        FontUtil.drawString(modsStr, curX, contentY, FONT_SIZE, new Color(155, 155, 168, 255), false);
-        curX += modsW + divGap;
-
-        RenderUtil.drawRect(curX, divY, 0.75f, divH, new Color(80, 80, 95, 160));
-        curX += 0.75f + divGap;
-
-        // 5. Time — muted secondary
-        FontUtil.drawString(timeStr, curX, contentY, FONT_SIZE, new Color(155, 155, 168, 255), false);
+        // 4. Time
+        FontUtil.drawString(timeStr, curX, contentY, FONT_SIZE, DI_TIME_TXT, false);
         curX += timeW + divGap;
 
-        RenderUtil.drawRect(curX, divY, 0.75f, divH, new Color(80, 80, 95, 160));
+        RenderUtil.drawRect(curX, divY, 0.75f, divH, DI_DIVIDER);
         curX += 0.75f + divGap;
 
-        // 6. Server / Status — accent-muted at tail
+        // 5. Server / Status
         Color serverColor = new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 210);
         FontUtil.drawString(serverStr, curX, contentY, FONT_SIZE, serverColor, false);
 

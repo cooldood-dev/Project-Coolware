@@ -27,8 +27,15 @@ public class C {
 
     public final static Reflections reflections = new Reflections(Main.class.getPackage().getName());
 
+    private static ScaledResolution cachedRes = null;
+
+    /** Called once per frame by DraggableRenderer before any res() calls. */
+    public static void updateResCache() {
+        cachedRes = new ScaledResolution(mc);
+    }
+
     public static ScaledResolution res() {
-        return new ScaledResolution(C.mc);
+        return cachedRes != null ? cachedRes : new ScaledResolution(mc);
     }
 
     public static final Gson gson = new GsonBuilder().setPrettyPrinting().enableComplexMapKeySerialization().create();
