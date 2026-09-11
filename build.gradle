@@ -1,0 +1,268 @@
+import java.nio.file.Files
+import java.nio.file.Paths
+import java.util.stream.Collectors
+
+buildscript {
+    repositories {
+        maven {url "https://files.minecraftforge.net/maven"}
+        maven {url "https://repo.spongepowered.org/maven"}
+    }
+    dependencies {
+        // latest 1.8.9 forge version i think
+        classpath "net.minecraftforge.gradle:ForgeGradle:2.1-SNAPSHOT"
+        classpath "org.spongepowered:mixingradle:0.6-SNAPSHOT"
+    }
+}
+
+apply plugin: "net.minecraftforge.gradle.forge"
+apply plugin: "org.spongepowered.mixin"
+apply plugin: "java"
+
+version             = mod_version
+group               = mod_group_id
+archivesBaseName    = "coolware"
+
+sourceCompatibility = targetCompatibility   = 1.8
+compileJava.options.encoding                = "UTF-8"
+
+repositories {
+    maven { url "https://repo.spongepowered.org/maven" }
+
+    // i could lwk put this anywhere, I just assume this is called first.
+    createEventBus()
+}
+
+minecraft {
+    version = "${minecraft_version}-${forge_version}-${minecraft_version}"
+    runDir = "run"
+    mappings = mapping_channel
+    makeObfSourceJar = false
+
+    // hip hip hooray!
+    replace "@MOD_ID@"      : mod_id
+    replace "@MOD_NAME@"    : mod_name
+    replace "@MOD_VERSION@" : mod_version
+}
+
+mixin {
+    disableRefMapWarning = true
+    defaultObfuscationEnv searge
+    add sourceSets.main, "mixins.${mod_id}.refmap.json"
+}
+
+configurations {
+    // so I can add other libraries to the compiled file, done in jar{}
+    addLibrary
+    compile.extendsFrom addLibrary
+}
+
+dependencies {
+    // add as annotationProcessor so stuff gets added to the refmap
+    annotationProcessor("org.spongepowered:mixin:0.7.11-SNAPSHOT")
+    // version 0.7.11 is the latest that works with 1.8.9 i think
+    addLibrary("org.spongepowered:mixin:0.7.11-SNAPSHOT") { transitive = false }
+
+    // i need lombok its so cute
+    compileOnly "org.projectlombok:lombok:1.18.32"
+    annotationProcessor "org.projectlombok:lombok:1.18.32"
+
+    // need reflections for modules, prob is a better way, I just can't think of one rn +1mb :sob:
+    addLibrary "org.reflections:reflections:0.10.2"
+
+    // need for commands and any other searching things, long live fuzzysearch
+    addLibrary "me.xdrop:fuzzywuzzy:1.4.0"
+}
+
+
+processResources {
+    def modIdProperties = [
+            "modid"         : mod_id,
+            "name"          : mod_name,
+            "description"   : mod_description,
+            "version"       : mod_version,
+            "mcversion"     : minecraft_version,
+            "authors"       : mod_authors,
+            "credits"       : mod_credits,
+            "url"           : mod_url
+    ]
+    inputs.properties modIdProperties
+
+    // fix mcmod.info to not be placeholders
+    filesMatching(["mcmod.info"]) {
+        expand(modIdProperties)
+    }
+}
+
+jar {
+    // adds any librarys with addLibrary to the compiled mod
+    from(configurations.addLibrary.collect {
+        it.isDirectory() ? it : zipTree(it)
+    }) {
+        exclude "dummyThing",
+                "LICENSE.txt",
+                "META-INF/MUMFREY.RSA",
+                "META-INF/maven/**",
+                "org/**/*.html"
+    }
+
+    manifest.attributes(
+            "ForceLoadAsMod"    : true,
+            "ModSide"           : "CLIENT",
+            "FMLCorePlugin"     : "${mod_group_id}.mixins.MixinLoader",
+            "TweakClass"        : "org.spongepowered.asm.launch.MixinTweaker",
+            "MixinConfigs"      : "mixins.${mod_id}.json",
+    )
+}
+
+// todo: rewrite this, it isnt fire.
+// this was a simple way to make an event bus I thought, its also O(m) time complexity where m is number of different events i believe!
+void createEventBus() {
+    ArrayList<Event> events = gatherEvents("")
+    // make sure they are in order, so that we add higher priority events to the file first, and they run first.
+    events.sort(Comparator.comparingInt {e -> e.priority})
+    // then sort by event names alphabetically so that all events of same type are next to eachother (yes they stay in right priority)
+    events.sort(Comparator.comparing {e -> e.eventName})
+
+    String busClasspath = "src.main.java.${mod_group_id}.events.Bus".replaceAll("\\.", "/")
+    String eventsClasspath = "${mod_group_id}.events.impl"
+
+    String PACKAGE = "package ${mod_group_id}.events;"
+    String classBase = """
+// magical self-writing class much wow! for more info check build.gradle!
+public class Bus {
+    public static java.util.List<Class<? extends Event>> events = java.util.Arrays.asList(
+        ${events.stream().map {e -> "${eventsClasspath}.${e.eventName}.class"}.distinct().collect(Collectors.toList()).toString().replace("[", "").replace("]", "")}
+    );
+
+    public static boolean post(Event event) {"""
+
+    String postMethod = ""
+    String lastEvent = ""
+
+    for (Event event : events) {
+        // this event is posted on any event
+        if (event.eventName == "EventEvent") {
+            postMethod += """
+        ${event.classPackage}.${event.methodName}(new ${eventsClasspath}.EventEvent(event));"""
+        }
+    }
+
+    // shoutout: https://css-tricks.com/snippets/javascript/array-of-country-names/ (small amount of cleansing was done)
+    String[] countryNames = ["Afghanistan","Albania","Algeria","Andorra","Angola","Anguilla","AntiguaAndBarbuda","Argentina","Armenia","Aruba","Australia","Austria","Azerbaijan","Bahamas","Bahrain","Bangladesh","Barbados","Belarus","Belgium","Belize","Benin","Bermuda","Bhutan","Bolivia","BosniaAndHerzegovina","Botswana","Brazil","BritishVirginIslands","Brunei","Bulgaria","BurkinaFaso","Burundi","Cambodia","Cameroon","CapeVerde","CaymanIslands","Chad","Chile","China","Colombia","Congo","CookIslands","CostaRica","CoteDIvoire","Croatia","CruiseShip","Cuba","Cyprus","CzechRepublic","Denmark","Djibouti","Dominica","DominicanRepublic","Ecuador","Egypt","ElSalvador","EquatorialGuinea","Estonia","Ethiopia","FalklandIslands","FaroeIslands","Fiji","Finland","France","FrenchPolynesia","FrenchWestIndies","Gabon","Gambia","Georgia","Germany","Ghana","Gibraltar","Greece","Greenland","Grenada","Guam","Guatemala","Guernsey","Guinea","GuineaBissau","Guyana","Haiti","Honduras","HongKong","Hungary","Iceland","India","Indonesia","Iran","Iraq","Ireland","IsleOfMan","Israel","Italy","Jamaica","Japan","Jersey","Jordan","Kazakhstan","Kenya","Kuwait","KyrgyzRepublic","Laos","Latvia","Lebanon","Lesotho","Liberia","Libya","Liechtenstein","Lithuania","Luxembourg","Macau","Macedonia","Madagascar","Malawi","Malaysia","Maldives","Mali","Malta","Mauritania","Mauritius","Mexico","Moldova","Monaco","Mongolia","Montenegro","Montserrat","Morocco","Mozambique","Namibia","Nepal","Netherlands","NetherlandsAntilles","NewCaledonia","NewZealand","Nicaragua","Niger","Nigeria","Norway","Oman","Pakistan","Palestine","Panama","PapuaNewGuinea","Paraguay","Peru","Philippines","Poland","Portugal","PuertoRico","Qatar","Reunion","Romania","Russia","Rwanda","SaintPierreAndMiquelon","Samoa","SanMarino","Satellite","SaudiArabia","Senegal","Serbia","Seychelles","SierraLeone","Singapore","Slovakia","Slovenia","SouthAfrica","SouthKorea","Spain","SriLanka","StKittsAndNevis","StLucia","StVincent","Sudan","Suriname","Swaziland","Sweden","Switzerland","Syria","Taiwan","Tajikistan","Tanzania","Thailand","TimorLEste","Togo","Tonga","TrinidadAndTobago","Tunisia","Turkey","Turkmenistan","TurksAndCaicos","Uganda","Ukraine","UnitedArabEmirates","UnitedKingdom","Uruguay","Uzbekistan","Venezuela","Vietnam","VirginIslands","Yemen","Zambia","Zimbabwe"]
+    String country = ""
+    for (Event event : events) {
+        if (event.eventName != lastEvent) {
+            if (event.eventName == "EventEvent") continue;
+
+            // close
+            if (!lastEvent.isEmpty()) {
+                postMethod += """
+            return ${country}.isCancelled();
+        }"""
+            }
+
+            country = countryNames[(int) (Math.random()*countryNames.length)]
+            // i wish this was java 16+ :(
+            postMethod += """   
+        if (event instanceof ${eventsClasspath}.${event.eventName}) {
+            ${eventsClasspath}.${event.eventName} ${country} = (${eventsClasspath}.${event.eventName}) event;"""
+        }
+
+        if (event.module) postMethod += """
+            if (${mod_group_id}.modules.ModuleManager.isEnabled(${event.classPackage}.class)) """
+
+        postMethod += """
+            ${event.classPackage}.${event.methodName}(${country});"""
+
+        lastEvent = event.eventName
+    }
+
+    String endClass = """
+            return ${country}.isCancelled();
+        }
+        
+        return false;
+    }
+}"""
+
+    // fix not compiling if no events
+    if (postMethod.isEmpty()) endClass = """
+    }
+}"""
+
+    // i like the fancy formatting of string in the build.gradle, so i will use it to the fullest.
+    String classText = "${PACKAGE}\n${classBase}${postMethod}${endClass}"
+
+    BufferedWriter writer = new BufferedWriter(new FileWriter("${busClasspath}.java"))
+    writer.write(classText)
+    writer.close()
+}
+
+// i don't think i can use reflections or whatever to find all methods with an annotation in the build.gradle, sorry, open to a pr <3
+ArrayList<Event> gatherEvents(String fileName) {
+    String path = "src.main.java.${mod_group_id}.${fileName}".replaceAll("\\.", "/")
+    ArrayList<Event> events = new ArrayList<>()
+
+    for (File file : Paths.get(path).toFile().listFiles()) {
+        // recursive call, scary! please don't stack overflow <3
+        if (file.isDirectory()) events.addAll(gatherEvents(fileName + "." + file.name))
+
+        else {
+            List<String> fileLines = Files.readAllLines(Paths.get(file.getAbsolutePath()))
+            boolean found = false
+            int priority = 1000
+            boolean module = false
+
+
+            for (String line : fileLines) {
+                // easier to read if its all text
+                String textNoSpaces = line.replaceAll(" ", "")
+
+                if (textNoSpaces.startsWith("@RegisterModule")) module = true
+
+                // todo: check if event is commented out with /* */
+                if (textNoSpaces.startsWith("@SubscribeEvent")) {
+                    found = true
+                    if (textNoSpaces.contains("priority=")) {
+                        // magical regex 2025 unpatched
+                        priority = Integer.parseInt(textNoSpaces.replaceAll(".*priority=|[,)].*", ""))
+                    }
+                }
+                else if (found) {
+                    // we are on the line after the one with @SubscribeEvent, this *SHOULD* have the method and event name :pray:
+                    events.add(
+                            new Event(
+                                    line.replaceAll(".*public static void |\\(.*", ""),
+                                    line.replaceAll(".*\\(| .*", ""),
+                                    mod_group_id + fileName + "." + file.name.split("\\.java")[0],
+                                    priority,
+                                    module
+                            )
+                    )
+
+                    found = false
+                    priority = 1000
+                }
+            }
+        }
+    }
+
+    return events
+}
+
+// no records in java 8 :(, no AllArgsConstructor without lombok either
+class Event {
+    String methodName
+    String eventName
+    String classPackage
+    int priority
+    boolean module
+
+    Event(String methodName, String eventName, String classPackage, int priority, boolean module) {
+        this.methodName = methodName
+        this.eventName = eventName
+        this.classPackage = classPackage
+        this.priority = priority
+        this.module = module
+    }
+}
