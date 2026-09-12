@@ -68,7 +68,9 @@ public abstract class ItemRendererMixin {
                     ordinal = 2)
     )
     private void skipTransform(ItemRenderer instance, float f1, float f2) {
-        // Suppressed — the animation below replaces this
+        if (!ModuleManager.isEnabled(Animations.class)) {
+            transformFirstPersonItem(f1, f2);
+        }
     }
 
     @Inject(

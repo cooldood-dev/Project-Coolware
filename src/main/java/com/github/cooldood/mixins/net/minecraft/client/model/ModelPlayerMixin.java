@@ -2,6 +2,9 @@ package com.github.cooldood.mixins.net.minecraft.client.model;
 
 import com.github.cooldood.modules.ModuleManager;
 import com.github.cooldood.modules.impl.render.ESP;
+import com.github.cooldood.utils.client.C;
+import com.github.cooldood.utils.minecraft.InvUtils;
+import com.github.cooldood.utils.minecraft.PlayerUtil;
 import com.github.cooldood.utils.minecraft.TargetUtil;
 import net.minecraft.client.model.ModelBiped;
 import net.minecraft.client.model.ModelPlayer;
@@ -61,6 +64,18 @@ public class ModelPlayerMixin extends ModelBiped {
         if (ESP.chams && TargetUtil.isValidTarget(entityIn, true)) {
             GL11.glDisable(GL11.GL_POLYGON_OFFSET_FILL);
             GL11.glPolygonOffset(1, 1000000);
+        }
+    }
+
+    @Inject(method = "setRotationAngles", at = @At("RETURN"))
+    public void onSetRotationAngles(float p_78087_1_, float p_78087_2_, float p_78087_3_, float p_78087_4_, float p_78087_5_, float p_78087_6_, Entity entityIn, CallbackInfo ci) {
+        if (entityIn == C.p() && PlayerUtil.isUsingItem() && InvUtils.isHoldingSword()) {
+            this.heldItemRight = 3;
+            this.bipedRightArm.rotateAngleX = this.bipedRightArm.rotateAngleX * 0.5F - ((float) Math.PI / 10F) * 3.0F;
+            this.bipedRightArm.rotateAngleY = -0.5235988F;
+            this.bipedRightArmwear.rotateAngleX = this.bipedRightArm.rotateAngleX;
+            this.bipedRightArmwear.rotateAngleY = this.bipedRightArm.rotateAngleY;
+            this.bipedRightArmwear.rotateAngleZ = this.bipedRightArm.rotateAngleZ;
         }
     }
 }

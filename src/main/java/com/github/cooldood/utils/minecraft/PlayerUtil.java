@@ -44,11 +44,16 @@ public class PlayerUtil {
     }
 
     public static boolean isUsingItem() {
-        return C.p().isUsingItem() || com.github.cooldood.modules.impl.combat.Watchdog.isModuleBlocking();
+        return (C.p() != null && C.p().isUsingItem())
+                || com.github.cooldood.modules.impl.combat.Watchdog.isModuleBlocking()
+                || com.github.cooldood.modules.impl.combat.KillAura.isBlocking();
     }
 
     @SubscribeEvent(priority = 9000)
     public static void updateLastBlocking(MotionEvent event) {
+        if (wasBlocking && !isUsingItem()) {
+            lastUnblock = MovementUtil.ticks;
+        }
         wasBlocking = isUsingItem();
     }
 

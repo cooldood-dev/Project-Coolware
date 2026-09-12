@@ -15,7 +15,7 @@ import com.github.cooldood.utils.minecraft.PlayerUtil;
 )
 public class NoSlow extends Module {
     public static boolean shouldSlowDown() {
-        return !ModuleManager.isEnabled(NoSlow.class) && PlayerUtil.isUsingItem();
+        return !ModuleManager.isEnabled(NoSlow.class) && ((C.p() != null && C.p().isUsingItem()) || com.github.cooldood.modules.impl.combat.Watchdog.isModuleBlocking());
     }
 
     @Override

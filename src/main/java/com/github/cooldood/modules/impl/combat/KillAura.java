@@ -46,6 +46,22 @@ public class KillAura extends Module {
         Adaptive
     }
 
+    @RegisterSubModule(name = "Sorting")
+    public static Sorting sorting = Sorting.Distance;
+
+    public enum Sorting {
+        Distance,
+        Health,
+        Angle,
+        HurtTime
+    }
+
+    @RegisterSubModule(name = "Switch Delay", min = 50, max = 2000, increment = 50, description = "Delay between switching targets in milliseconds")
+    public static double switchDelay = 300.0;
+
+    @RegisterSubModule(name = "Switch On Hit", description = "Switch target immediately after attacking")
+    public static boolean switchOnHit = true;
+
     @RegisterSubModule(name = "Seek Range", min = 3.0, max = 8.0, increment = 0.1)
     public static double seekRange = 6.0;
 
@@ -159,6 +175,10 @@ public class KillAura extends Module {
     public static long delay = 0;
     public static int hitTicks = 0;
 
+    public static boolean isBlocking() {
+        return ModuleManager.isEnabled(KillAura.class) && autoBlocking && InvUtils.isHoldingSword();
+    }
+
     private static EntityLivingBase lastTarget;
     private static Vec3 smoothedBodyPoint;
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
@@ -219,6 +239,8 @@ public class KillAura extends Module {
         if (targetAnimals) list.add(TargetManager.Targets.ANIMALS);
         TargetManager.configure(list);
         TargetManager.setSeekRange((float) seekRange);
+        TargetManager.setSorting(sorting);
+        TargetManager.setSwitchDelay((long) switchDelay);
         if (mode == Mode.Single) TargetManager.setMode(TargetManager.Mode.SINGLE);
         else if (mode == Mode.Switch) TargetManager.setMode(TargetManager.Mode.SWITCH);
         else TargetManager.setMode(TargetManager.Mode.ADAPTIVE);
@@ -253,6 +275,8 @@ public class KillAura extends Module {
 
         if (ab != AutoBlock.None && getDistanceToTarget(target) <= blockRange && InvUtils.isHoldingSword()) {
             autoblock();
+        } else {
+            unblock();
         }
 
         attack();
@@ -398,6 +422,9 @@ public class KillAura extends Module {
             }
             C.p().swingItem();
             C.mc.playerController.attackEntity(C.p(), target);
+            if (mode == Mode.Switch && switchOnHit) {
+                TargetManager.switchTarget();
+            }
             if (rotations == Rotations.Polar) {
                 PolarRotationManager.triggerFlick((float) polarFlickChance);
             }

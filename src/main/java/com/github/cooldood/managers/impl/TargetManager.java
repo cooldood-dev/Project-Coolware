@@ -4,7 +4,9 @@ import com.github.cooldood.events.SubscribeEvent;
 import com.github.cooldood.events.impl.PlayerUpdateEvent;
 import com.github.cooldood.events.impl.RespawnEvent;
 import com.github.cooldood.events.impl.WorldUnloadEvent;
+import com.github.cooldood.modules.impl.combat.KillAura;
 import com.github.cooldood.utils.client.C;
+import com.github.cooldood.utils.minecraft.RotationUtils;
 import com.github.cooldood.utils.minecraft.TimerUtils;
 import lombok.Getter;
 import lombok.NonNull;
@@ -44,6 +46,10 @@ public class TargetManager {
     @Setter
     private static Mode mode = Mode.ADAPTIVE;
 
+    @Getter
+    @Setter
+    private static KillAura.Sorting sorting = KillAura.Sorting.Distance;
+
     @Setter
     private static List<Targets> targets = Arrays.asList(Targets.PLAYERS, Targets.HOSTILES);
 
@@ -53,14 +59,20 @@ public class TargetManager {
 
     @Getter
     @Setter
+    private static long switchDelay = 300L;
+
+    @Getter
+    @Setter
     private static int switchTime = 2;
 
     private static int targetIndex = 0;
 
     public TargetManager(float seekRange) {
         mode = Mode.ADAPTIVE;
+        sorting = KillAura.Sorting.Distance;
         targets = Arrays.asList(Targets.PLAYERS, Targets.HOSTILES);
         TargetManager.seekRange = seekRange;
+        switchDelay = 300L;
         switchTime = 2;
     }
 
@@ -120,21 +132,29 @@ public class TargetManager {
     @SubscribeEvent
     public static void onWorldUnload(WorldUnloadEvent event) {
         target = null;
+        targetIndex = 0;
+        switchTimer.reset();
     }
 
     @SubscribeEvent
     public static void onRespawn(RespawnEvent event) {
         target = null;
+        targetIndex = 0;
+        switchTimer.reset();
     }
 
     public static void updateTargets() {
         if (C.p() == null || C.w() == null) {
             target = null;
+            targetList = new CopyOnWriteArrayList<>();
             return;
         }
-        targetList = getTargets();
+        List<Entity> list = getTargets();
+        list.sort(getComparator(sorting));
+        targetList = new CopyOnWriteArrayList<>(list);
         if (targetList.isEmpty()) {
             target = null;
+            targetIndex = 0;
             return;
         }
         selectTarget();
@@ -143,25 +163,70 @@ public class TargetManager {
     private static void selectTarget() {
         if (targetList.isEmpty()) {
             target = null;
+            targetIndex = 0;
             return;
         }
         if (mode == Mode.SINGLE) {
-            target = (EntityLivingBase) targetList.get(0);
+            if (target == null || !targetList.contains(target)) {
+                target = (EntityLivingBase) targetList.get(0);
+            }
         } else if (mode == Mode.SWITCH) {
             if (targetIndex >= targetList.size()) {
                 targetIndex = 0;
             }
-            if (switchTimer.hasTimeElapsed(switchTime * 100L, true)) {
+            if (switchTimer.hasTimeElapsed(switchDelay, true)) {
                 targetIndex = (targetIndex + 1) % targetList.size();
-                switchTimer.reset();
             }
             target = (EntityLivingBase) targetList.get(targetIndex);
         } else if (mode == Mode.ADAPTIVE) {
-            target = (EntityLivingBase) targetList.stream()
-                    .min(Comparator.comparingDouble(TargetManager::getDistance))
-                    .orElse(null);
+            target = (EntityLivingBase) targetList.get(0);
         } else {
             throw new IllegalStateException("Unexpected value: " + mode);
+        }
+    }
+
+    public static void switchTarget() {
+        if (targetList.isEmpty()) {
+            target = null;
+            targetIndex = 0;
+            return;
+        }
+        targetIndex = (targetIndex + 1) % targetList.size();
+        target = (EntityLivingBase) targetList.get(targetIndex);
+        switchTimer.reset();
+    }
+
+    public static Comparator<Entity> getComparator(KillAura.Sorting sortMode) {
+        if (sortMode == null) sortMode = KillAura.Sorting.Distance;
+        switch (sortMode) {
+            case Health:
+                return Comparator.comparingDouble((Entity e) -> {
+                    if (e instanceof EntityLivingBase) {
+                        EntityLivingBase el = (EntityLivingBase) e;
+                        return el.getHealth() + el.getAbsorptionAmount();
+                    }
+                    return Double.MAX_VALUE;
+                }).thenComparingDouble(TargetManager::getDistance);
+            case Angle:
+                return Comparator.comparingDouble((Entity e) -> {
+                    if (C.p() == null || !(e instanceof EntityLivingBase)) return Double.MAX_VALUE;
+                    Vec3 eyes = C.p().getPositionEyes(1.0f);
+                    Vec3 targetPos = new Vec3(e.posX, e.posY + e.getEyeHeight() * 0.75, e.posZ);
+                    float[] rot = RotationUtils.getRotationsTo(eyes, targetPos);
+                    float yawDiff = Math.abs(MathHelper.wrapAngleTo180_float(rot[0] - C.p().rotationYaw));
+                    float pitchDiff = Math.abs(MathHelper.wrapAngleTo180_float(rot[1] - C.p().rotationPitch));
+                    return Math.hypot(yawDiff, pitchDiff);
+                }).thenComparingDouble(TargetManager::getDistance);
+            case HurtTime:
+                return Comparator.comparingInt((Entity e) -> {
+                    if (e instanceof EntityLivingBase) {
+                        return ((EntityLivingBase) e).hurtResistantTime;
+                    }
+                    return Integer.MAX_VALUE;
+                }).thenComparingDouble(TargetManager::getDistance);
+            case Distance:
+            default:
+                return Comparator.comparingDouble(TargetManager::getDistance);
         }
     }
 
