@@ -75,7 +75,7 @@ public class FakeLag extends Module {
     }
 
     private static boolean canBlink() {
-        return !KillAura.isBlocking() || KillAura.autoblockMode != KillAura.AutoBlockMode.Watchdog;
+        return true;
     }
 
     @Override

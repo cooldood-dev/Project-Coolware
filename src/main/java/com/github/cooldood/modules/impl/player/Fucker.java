@@ -60,8 +60,6 @@ public class Fucker extends Module {
     @RegisterSubModule(name = "Override Autoblock")
     public static boolean noAutoblock = true;
 
-    @RegisterSubModule(name = "Override Kill Aura")
-    public static boolean noKillAura = true;
 
     @RegisterSubModule(name = "Override Scaffold")
     public static boolean noScaffold = false;

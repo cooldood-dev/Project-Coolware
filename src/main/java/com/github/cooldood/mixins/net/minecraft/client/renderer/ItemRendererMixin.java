@@ -1,7 +1,6 @@
 package com.github.cooldood.mixins.net.minecraft.client.renderer;
 
 import com.github.cooldood.modules.ModuleManager;
-import com.github.cooldood.modules.impl.combat.KillAura;
 import com.github.cooldood.modules.impl.render.Animations;
 import com.github.cooldood.modules.impl.render.NoRender;
 import com.github.cooldood.utils.client.C;
@@ -48,7 +47,7 @@ public abstract class ItemRendererMixin {
 
     @Redirect(method = "renderItemInFirstPerson", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/entity/AbstractClientPlayer;getItemInUseCount()I"))
     public int onGetItemInUseCount(AbstractClientPlayer instance) {
-        return instance.getItemInUseCount() + (KillAura.isBlocking() ? 1 : 0);
+        return instance.getItemInUseCount() + (PlayerUtil.isUsingItem() && !instance.isUsingItem() ? 1 : 0);
     }
 
     @Inject(method = "renderPlayerArm", at = @At(value = "HEAD"), cancellable = true)

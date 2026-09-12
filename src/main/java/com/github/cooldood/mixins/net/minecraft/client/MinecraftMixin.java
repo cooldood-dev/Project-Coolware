@@ -6,7 +6,6 @@ import com.github.cooldood.bridge.net.minecraft.util.TimerBridge;
 import com.github.cooldood.events.Bus;
 import com.github.cooldood.events.impl.*;
 import com.github.cooldood.modules.ModuleManager;
-import com.github.cooldood.modules.impl.combat.KillAura;
 import com.github.cooldood.modules.impl.player.FastPlace;
 import com.github.cooldood.utils.client.C;
 import com.github.cooldood.utils.minecraft.PlayerUtil;
@@ -95,38 +94,19 @@ public abstract class MinecraftMixin implements MinecraftBridge {
 
     @Redirect(method = "runTick", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/settings/KeyBinding;isPressed()Z", ordinal = 7))
     public boolean onAttemptClick(KeyBinding instance) {
-        if (!PlayerUtil.canAttack() && KillAura.isBlocking()) return false;
-
-        boolean isPressed = instance.isPressed();
-
-        if (isPressed && KillAura.canSwingWhileBlocking()) {
-            this.clickMouse();
-        }
-
-        return isPressed;
+        if (!PlayerUtil.canAttack()) return false;
+        return instance.isPressed();
     }
 
     @Redirect(method = "runTick", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/settings/KeyBinding;isPressed()Z", ordinal = 10))
     public boolean onSuccessfulClick(KeyBinding instance) {
-        boolean isPressed = instance.isPressed();
-
-        if (isPressed && ModuleManager.isEnabled(KillAura.class)) {
-            KillAura.swingQueued = true;
-            return false;
-        }
-
-        return isPressed;
+        return instance.isPressed();
     }
 
     // blehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
     @Redirect(method = "runTick", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;sendClickBlockToController(Z)V"))
     public void onSuccessfulClick(Minecraft instance, boolean b) {
-        if (ModuleManager.isEnabled(KillAura.class)) {
-            KillAura.clickBlockQueued = true;
-        }
-        else {
-            this.sendClickBlockToController(this.currentScreen == null && this.gameSettings.keyBindAttack.isKeyDown() && this.inGameHasFocus);
-        }
+        this.sendClickBlockToController(this.currentScreen == null && this.gameSettings.keyBindAttack.isKeyDown() && this.inGameHasFocus);
     }
 
     @Redirect(method = "runGameLoop", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/entity/EntityPlayerSP;isEntityInsideOpaqueBlock()Z"))

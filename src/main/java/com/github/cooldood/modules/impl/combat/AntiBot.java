@@ -310,7 +310,7 @@ public class AntiBot extends Module {
     }
 
     private static void handleSpawnPlayerPacket(S0CPacketSpawnPlayer packet) {
-        if (KillAura.target != null && !hasRemovedEntities.contains(packet.getEntityID())) {
+        if (C.p() != null && C.p().getLastAttacker() != null && !hasRemovedEntities.contains(packet.getEntityID())) {
             spawnedInCombat.add(packet.getEntityID());
         }
     }

@@ -4,7 +4,6 @@ import com.github.cooldood.events.Bus;
 import com.github.cooldood.events.SubscribeEvent;
 import com.github.cooldood.events.impl.*;
 import com.github.cooldood.modules.ModuleManager;
-import com.github.cooldood.modules.impl.combat.KillAura;
 import com.github.cooldood.modules.impl.render.Freecam;
 import com.github.cooldood.utils.client.C;
 import lombok.Getter;
@@ -18,7 +17,7 @@ import net.minecraft.util.Vec3;
 public class PlayerUtil {
     public static boolean canAttack() {
         if (com.github.cooldood.modules.impl.combat.Watchdog.isModuleBlocking()) return false;
-        return !KillAura.isBlockingSwing() || KillAura.canSwingWhileBlocking();
+        return true;
     }
 
     public static boolean attack(Entity target) {
@@ -45,7 +44,7 @@ public class PlayerUtil {
     }
 
     public static boolean isUsingItem() {
-        return C.p().isUsingItem() || KillAura.isServerBlocking() || com.github.cooldood.modules.impl.combat.Watchdog.isModuleBlocking();
+        return C.p().isUsingItem() || com.github.cooldood.modules.impl.combat.Watchdog.isModuleBlocking();
     }
 
     @SubscribeEvent(priority = 9000)
