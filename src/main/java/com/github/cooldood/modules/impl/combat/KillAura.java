@@ -107,9 +107,9 @@ public class KillAura extends Module {
     public static boolean autoBlockRequirePress = false;
 
     // ── Rotation Modes ──────────────────────────────────────────────────────
-    public enum RotationType { NONE, Legit, Silent, LockView, LiquidBounce, Hypixel, gay }
+    public enum RotationType { NONE, Legit, Silent, LockView, LiquidBounce, Hypixel }
     @RegisterSubModule(name = "Rotations")
-    public static RotationType rotations = RotationType.gay;
+    public static RotationType rotations = RotationType.LiquidBounce;
 
     public enum MoveFixMode { NONE, Silent, Strict }
     @RegisterSubModule(name = "Move Fix")
@@ -161,31 +161,6 @@ public class KillAura extends Module {
 
     @RegisterSubModule(name = "Hypixel Yaw Random", min = 0.0, max = 5.0, increment = 1.0)
     public static double ravenYawRandom = 1.0;
-
-    // ── Gay Rotation Mode SubSettings ───────────────────────────────────────
-    @RegisterSubModule(name = "Gay Rotation Speed", min = 2.0, max = 40.0, increment = 1.0)
-    public static double gayRotationSpeed = 16.0;
-
-    @RegisterSubModule(name = "Gay Acceleration", min = 0.1, max = 1.0, increment = 0.05)
-    public static double gayAcceleration = 0.4;
-
-    @RegisterSubModule(name = "Gay Target Height", min = 0.1, max = 1.0, increment = 0.05)
-    public static double gayTargetHeight = 0.75;
-
-    @RegisterSubModule(name = "Gay Predict")
-    public static boolean gayPredict = true;
-
-    @RegisterSubModule(name = "Gay Predict Amount", min = 0.0, max = 3.0, increment = 0.1, parent = "Gay Predict")
-    public static double gayPredictAmount = 1.2;
-
-    @RegisterSubModule(name = "Gay Micro Sway")
-    public static boolean gayMicroSway = true;
-
-    @RegisterSubModule(name = "Gay Sway Speed", min = 0.5, max = 4.0, increment = 0.1, parent = "Gay Micro Sway")
-    public static double gaySwaySpeed = 1.5;
-
-    @RegisterSubModule(name = "Gay Sway Amplitude", min = 0.1, max = 2.0, increment = 0.1, parent = "Gay Micro Sway")
-    public static double gaySwayAmplitude = 0.6;
 
     // ── Target Filter Settings ──────────────────────────────────────────────
     @RegisterSubModule(name = "Players")
@@ -299,13 +274,6 @@ public class KillAura extends Module {
                 serverRotation = new RotationUtil.Rotation(finalPitch, finalYaw);
                 targetYaw = finalYaw;
                 targetPitch = finalPitch;
-            } else if (rotations == RotationType.gay) {
-                float[] raw = calculateGayRawRotations(target.getEntity());
-                float[] stepped = stepGayRotationTowards(serverRotation.yaw, serverRotation.pitch, raw[0], raw[1], gayRotationSpeed, gayAcceleration);
-                float[] fixed = applyGcd(stepped[0], stepped[1], serverRotation.yaw, serverRotation.pitch);
-                serverRotation = new RotationUtil.Rotation(fixed[1], fixed[0]);
-                targetYaw = fixed[0];
-                targetPitch = fixed[1];
             } else if (rotations == RotationType.Legit || rotations == RotationType.Silent || rotations == RotationType.LockView) {
                 float[] aim = getRotationsToEntity(target.getEntity());
                 float[] fixed = applyGcd(aim[0], aim[1], serverRotation.yaw, serverRotation.pitch);
@@ -332,15 +300,9 @@ public class KillAura extends Module {
             float diffPitch = playerPitch - serverRotation.pitch;
 
             if (Math.abs(diffYaw) > 1.0F || Math.abs(diffPitch) > 1.0F) {
-                if (rotations == RotationType.gay) {
-                    float[] stepped = stepGayRotationTowards(serverRotation.yaw, serverRotation.pitch, playerYaw, playerPitch, gayRotationSpeed, gayAcceleration);
-                    float[] fixed = applyGcd(stepped[0], stepped[1], serverRotation.yaw, serverRotation.pitch);
-                    serverRotation = new RotationUtil.Rotation(fixed[1], fixed[0]);
-                } else {
-                    RotationUtil.Rotation smoothRot = getSmoothBackRotation(serverRotation, new RotationUtil.Rotation(playerPitch, playerYaw));
-                    float[] fixed = applyGcd(smoothRot.yaw, smoothRot.pitch, serverRotation.yaw, serverRotation.pitch);
-                    serverRotation = new RotationUtil.Rotation(fixed[1], fixed[0]);
-                }
+                RotationUtil.Rotation smoothRot = getSmoothBackRotation(serverRotation, new RotationUtil.Rotation(playerPitch, playerYaw));
+                float[] fixed = applyGcd(smoothRot.yaw, smoothRot.pitch, serverRotation.yaw, serverRotation.pitch);
+                serverRotation = new RotationUtil.Rotation(fixed[1], fixed[0]);
                 event.rotation = new RotationUtil.Rotation(serverRotation.pitch, serverRotation.yaw);
                 C.p().rotationYawHead = serverRotation.yaw;
                 C.p().renderYawOffset = serverRotation.yaw;
@@ -419,8 +381,8 @@ public class KillAura extends Module {
     private static boolean performAttack(float yaw, float pitch) {
         if (target == null || C.p() == null) return false;
 
-        if (rotations == RotationType.LiquidBounce || rotations == RotationType.gay) {
-            MovingObjectPosition intercept = rayTrace(target.getBox().expand(0.1, 0.1, 0.1), yaw, pitch, attackRange);
+        if (rotations == RotationType.LiquidBounce) {
+            MovingObjectPosition intercept = rayTrace(target.getBox(), yaw, pitch, attackRange);
             if (intercept == null && !throughWalls) {
                 return false;
             }
@@ -773,86 +735,6 @@ public class KillAura extends Module {
         serverYaw += deltaYaw / yawSmoothing;
         serverPitch += deltaPitch / pitchSmoothing;
         return new float[]{serverYaw, serverPitch};
-    }
-
-    // ── Gay Rotation Engine ─────────────────────────────────────────────────
-    private static Vec3 calculateGayTargetVector(EntityLivingBase entity) {
-        AxisAlignedBB bb = entity.getEntityBoundingBox();
-        double heightFrac = MathHelper.clamp_double(gayTargetHeight, 0.1, 1.0);
-        double targetY = bb.minY + (bb.maxY - bb.minY) * heightFrac;
-        double targetX = (bb.minX + bb.maxX) / 2.0;
-        double targetZ = (bb.minZ + bb.maxZ) / 2.0;
-
-        if (gayPredict) {
-            double dX = entity.posX - entity.lastTickPosX;
-            if (dX == 0 && Math.abs(entity.motionX) > 0.001) dX = entity.motionX;
-
-            double dY = (entity.posY - entity.lastTickPosY) * 0.5;
-            if (dY == 0 && Math.abs(entity.motionY) > 0.001) dY = entity.motionY * 0.5;
-
-            double dZ = entity.posZ - entity.lastTickPosZ;
-            if (dZ == 0 && Math.abs(entity.motionZ) > 0.001) dZ = entity.motionZ;
-
-            targetX += dX * gayPredictAmount;
-            targetY += dY * gayPredictAmount;
-            targetZ += dZ * gayPredictAmount;
-        }
-
-        return new Vec3(targetX, targetY, targetZ);
-    }
-
-    private static float[] calculateGayRawRotations(EntityLivingBase entity) {
-        Vec3 eyes = C.p().getPositionEyes(1.0F);
-        Vec3 targetPoint = calculateGayTargetVector(entity);
-
-        double diffX = targetPoint.xCoord - eyes.xCoord;
-        double diffY = targetPoint.yCoord - eyes.yCoord;
-        double diffZ = targetPoint.zCoord - eyes.zCoord;
-        double dist = MathHelper.sqrt_double(diffX * diffX + diffZ * diffZ);
-
-        float yaw = MathHelper.wrapAngleTo180_float((float) Math.toDegrees(Math.atan2(diffZ, diffX)) - 90.0F);
-        float pitch = MathHelper.clamp_float((float) -Math.toDegrees(Math.atan2(diffY, dist)), -90.0F, 90.0F);
-
-        if (gayMicroSway) {
-            double time = (System.currentTimeMillis() % 10000000L) * 0.003 * gaySwaySpeed;
-            double swayYaw = (Math.sin(time) * 0.65 + Math.cos(time * 1.618) * 0.35) * gaySwayAmplitude;
-            double swayPitch = (Math.cos(time * 0.85) * 0.6 + Math.sin(time * 1.414) * 0.4) * (gaySwayAmplitude * 0.7);
-
-            double noiseYaw = (random.nextGaussian() * 0.08) * gaySwayAmplitude;
-            double noisePitch = (random.nextGaussian() * 0.06) * gaySwayAmplitude;
-
-            yaw = MathHelper.wrapAngleTo180_float(yaw + (float) (swayYaw + noiseYaw));
-            pitch = MathHelper.clamp_float(pitch + (float) (swayPitch + noisePitch), -90.0F, 90.0F);
-        }
-
-        return new float[]{yaw, pitch};
-    }
-
-    private static float[] stepGayRotationTowards(float currentYaw, float currentPitch, float targetYaw, float targetPitch, double baseSpeed, double powerExp) {
-        float diffYaw = MathHelper.wrapAngleTo180_float(targetYaw - currentYaw);
-        float diffPitch = targetPitch - currentPitch;
-        double totalAngularDist = Math.sqrt(diffYaw * diffYaw + diffPitch * diffPitch);
-
-        if (totalAngularDist < 0.0001) {
-            return new float[]{targetYaw, targetPitch};
-        }
-
-        double normalized = totalAngularDist / 45.0;
-        double accelMultiplier = Math.pow(Math.max(0.001, normalized), powerExp);
-        double stepSpeed = baseSpeed * accelMultiplier;
-        stepSpeed = Math.max(stepSpeed, 0.2);
-
-        float nextYaw, nextPitch;
-        if (totalAngularDist <= stepSpeed) {
-            nextYaw = targetYaw;
-            nextPitch = targetPitch;
-        } else {
-            float ratio = (float) (stepSpeed / totalAngularDist);
-            nextYaw = currentYaw + diffYaw * ratio;
-            nextPitch = MathHelper.clamp_float(currentPitch + diffPitch * ratio, -90.0F, 90.0F);
-        }
-
-        return new float[]{nextYaw, nextPitch};
     }
 
     // ── Common Rotation & Raytrace Utilities ─────────────────────────────────
