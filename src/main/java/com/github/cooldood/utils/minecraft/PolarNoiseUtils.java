@@ -1,4 +1,4 @@
-package ddlc.yuri.utils.client;
+package com.github.cooldood.utils.minecraft;
 
 import java.util.Random;
 
