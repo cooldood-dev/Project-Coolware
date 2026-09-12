@@ -21,7 +21,7 @@ public class RayCastUtils {
         Vec3 look = WorldUtil.getVectorForRotation(rotation.y, rotation.x);
         Vec3 reach = eyes.addVector(look.xCoord * range, look.yCoord * range, look.zCoord * range);
 
-        MovingObjectPosition blockHit = C.w().rayTraceBlocks(eyes, reach, false, false, true);
+        MovingObjectPosition blockHit = C.w().rayTraceBlocks(eyes, reach, false, false, false);
         double d1 = range;
         if (blockHit != null) {
             d1 = blockHit.hitVec.distanceTo(eyes);
@@ -36,7 +36,7 @@ public class RayCastUtils {
         );
 
         for (Entity entity1 : list) {
-            float f1 = entity1.getCollisionBorderSize();
+            float f1 = entity1.getCollisionBorderSize() + 0.15F;
             AxisAlignedBB axisalignedbb = entity1.getEntityBoundingBox().expand(f1, f1, f1);
             MovingObjectPosition intercept = axisalignedbb.calculateIntercept(eyes, reach);
 

@@ -145,7 +145,8 @@ public class RotationManager {
         if (active && rotations != null) {
             C.p().rotationYawHead = rotations.x;
             lastServerRotations = new Vector2f(rotations.x, rotations.y);
-            if (Math.abs((rotations.x - C.p().rotationYaw) % 360) < 1 && Math.abs(rotations.y - C.p().rotationPitch) < 1) {
+            if (!com.github.cooldood.modules.ModuleManager.isEnabled(com.github.cooldood.modules.impl.combat.KillAura.class)
+                    && Math.abs((rotations.x - C.p().rotationYaw) % 360) < 1 && Math.abs(rotations.y - C.p().rotationPitch) < 1) {
                 active = false;
                 correctDisabledRotations();
             }

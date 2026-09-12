@@ -50,10 +50,10 @@ public class KillAura extends Module {
     public static double seekRange = 6.0;
 
     @RegisterSubModule(name = "Attack Range", min = 3.0, max = 6.0, increment = 0.1)
-    public static double attackRange = 3.0;
+    public static double attackRange = 4.2;
 
     @RegisterSubModule(name = "Swing Range", min = 3.0, max = 8.0, increment = 0.1)
-    public static double swingRange = 4.0;
+    public static double swingRange = 4.5;
 
     @RegisterSubModule(name = "Block Range", min = 3.0, max = 8.0, increment = 0.1)
     public static double blockRange = 5.0;
@@ -116,7 +116,7 @@ public class KillAura extends Module {
     public static double polarFlickChance = 50.0;
 
     @RegisterSubModule(name = "Ray Cast")
-    public static boolean rayCast = true;
+    public static boolean rayCast = false;
 
     @RegisterSubModule(name = "Move Fix")
     public static MoveFix fix = MoveFix.Silent;
@@ -140,7 +140,7 @@ public class KillAura extends Module {
     public static boolean targetPlayers = true;
 
     @RegisterSubModule(name = "Target Teammates")
-    public static boolean targetTeammates = false;
+    public static boolean targetTeammates = true;
 
     @RegisterSubModule(name = "Target Invisibles")
     public static boolean targetInvisibles = false;
@@ -247,7 +247,11 @@ public class KillAura extends Module {
 
         calculateRotations();
 
-        if (ab != AutoBlock.None && C.p().getDistanceToEntity(target) <= blockRange && InvUtils.isHoldingSword()) {
+        if (RotationManager.rotations != null) {
+            event.rotation = new RotationUtil.Rotation(RotationManager.rotations.y, RotationManager.rotations.x);
+        }
+
+        if (ab != AutoBlock.None && getDistanceToTarget(target) <= blockRange && InvUtils.isHoldingSword()) {
             autoblock();
         }
 
@@ -257,6 +261,9 @@ public class KillAura extends Module {
     @SubscribeEvent
     public static void onMotion(MotionEvent event) {
         hitTicks++;
+        if (target != null && canAttack) {
+            attack();
+        }
     }
 
     @SubscribeEvent
@@ -348,9 +355,19 @@ public class KillAura extends Module {
         return new Vector2f(rot[0], rot[1]);
     }
 
+    public static double getDistanceToTarget(EntityLivingBase target) {
+        if (C.p() == null || target == null) return 999.0;
+        Vec3 eyes = C.p().getPositionEyes(1.0f);
+        AxisAlignedBB box = target.getEntityBoundingBox();
+        double closestX = MathHelper.clamp_double(eyes.xCoord, box.minX, box.maxX);
+        double closestY = MathHelper.clamp_double(eyes.yCoord, box.minY, box.maxY);
+        double closestZ = MathHelper.clamp_double(eyes.zCoord, box.minZ, box.maxZ);
+        return Math.min(C.p().getDistanceToEntity(target), eyes.distanceTo(new Vec3(closestX, closestY, closestZ)));
+    }
+
     private static void autoblock() {
         if (C.p() == null || C.mc.playerController == null) return;
-        if (target == null || C.p().getDistanceToEntity(target) > blockRange || !InvUtils.isHoldingSword()) {
+        if (target == null || getDistanceToTarget(target) > blockRange || !InvUtils.isHoldingSword()) {
             if (autoBlocking) unblock();
             return;
         }
@@ -370,11 +387,11 @@ public class KillAura extends Module {
         if (C.p() == null || C.mc.playerController == null || target == null || !canAttack) return;
         if (!hitTimerDone()) return;
 
-        double dist = C.p().getDistanceToEntity(target);
+        double dist = getDistanceToTarget(target);
         if (dist <= attackRange && !useOnlyMouse) {
             if (rayCast) {
                 Vector2f rot = RotationManager.rotations != null ? RotationManager.rotations : new Vector2f(C.p().rotationYaw, C.p().rotationPitch);
-                MovingObjectPosition mop = RayCastUtils.rayCast(rot, (float) blockRange);
+                MovingObjectPosition mop = RayCastUtils.rayCast(rot, Math.max(attackRange, blockRange));
                 if (mop == null || mop.entityHit == null || mop.entityHit != target) {
                     return;
                 }
@@ -393,7 +410,7 @@ public class KillAura extends Module {
             }
             hitTicks = 0;
         } else if (dist <= swingRange) {
-            com.github.cooldood.bridge.net.minecraft.client.MinecraftBridge.from(C.mc).bridge$clickMouse();
+            C.p().swingItem();
             hitTicks = 0;
         }
     }
@@ -409,10 +426,16 @@ public class KillAura extends Module {
 
     private static boolean canSeeEntity(Entity entity) {
         if (throughWalls) return true;
-        if (C.p() == null || C.w() == null) return false;
+        if (C.p() == null || C.w() == null || entity == null) return false;
+        if (C.p().canEntityBeSeen(entity)) return true;
         Vec3 eyes = C.p().getPositionEyes(1.0f);
-        Vec3 targetPos = new Vec3(entity.posX, entity.posY + entity.getEyeHeight(), entity.posZ);
-        return C.w().rayTraceBlocks(eyes, targetPos, false, true, false) == null;
+        AxisAlignedBB bb = entity.getEntityBoundingBox();
+        Vec3 head = new Vec3(entity.posX, entity.posY + entity.getEyeHeight(), entity.posZ);
+        Vec3 chest = new Vec3(entity.posX, (bb.minY + bb.maxY) / 2.0, entity.posZ);
+        Vec3 feet = new Vec3(entity.posX, bb.minY + 0.1, entity.posZ);
+        return C.w().rayTraceBlocks(eyes, head, false, false, false) == null
+                || C.w().rayTraceBlocks(eyes, chest, false, false, false) == null
+                || C.w().rayTraceBlocks(eyes, feet, false, false, false) == null;
     }
 
     @Override

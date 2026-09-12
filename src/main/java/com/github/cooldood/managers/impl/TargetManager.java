@@ -17,6 +17,11 @@ import net.minecraft.entity.monster.EntityMob;
 import net.minecraft.entity.passive.EntityAnimal;
 import net.minecraft.entity.player.EntityPlayer;
 
+import net.minecraft.scoreboard.ScorePlayerTeam;
+import net.minecraft.util.AxisAlignedBB;
+import net.minecraft.util.MathHelper;
+import net.minecraft.util.Vec3;
+
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -153,11 +158,21 @@ public class TargetManager {
             target = (EntityLivingBase) targetList.get(targetIndex);
         } else if (mode == Mode.ADAPTIVE) {
             target = (EntityLivingBase) targetList.stream()
-                    .min(Comparator.comparingDouble(e -> C.p().getDistanceToEntity(e)))
+                    .min(Comparator.comparingDouble(TargetManager::getDistance))
                     .orElse(null);
         } else {
             throw new IllegalStateException("Unexpected value: " + mode);
         }
+    }
+
+    public static double getDistance(Entity e) {
+        if (C.p() == null || e == null) return 999.0;
+        Vec3 eyes = C.p().getPositionEyes(1.0f);
+        AxisAlignedBB box = e.getEntityBoundingBox();
+        double closestX = MathHelper.clamp_double(eyes.xCoord, box.minX, box.maxX);
+        double closestY = MathHelper.clamp_double(eyes.yCoord, box.minY, box.maxY);
+        double closestZ = MathHelper.clamp_double(eyes.zCoord, box.minZ, box.maxZ);
+        return Math.min(C.p().getDistanceToEntity(e), eyes.distanceTo(new Vec3(closestX, closestY, closestZ)));
     }
 
     public static List<Entity> getTargets() {
@@ -167,7 +182,7 @@ public class TargetManager {
                 .filter(e -> e != C.p())
                 .filter(e -> !e.isDead)
                 .filter(e -> ((EntityLivingBase) e).getHealth() > 0)
-                .filter(e -> C.p().getDistanceToEntity(e) <= seekRange)
+                .filter(e -> getDistance(e) <= seekRange)
                 .filter(TargetManager::isValidEntity)
                 .collect(Collectors.toList());
     }
@@ -192,13 +207,36 @@ public class TargetManager {
         return false;
     }
 
-    public static boolean inTeam(@NonNull ICommandSender a, @NonNull ICommandSender b) {
-        String s = "\u00a7" + teamColor(a);
-        return a.getDisplayName().getFormattedText().contains(s) && b.getDisplayName().getFormattedText().contains(s);
+    public static boolean inTeam(ICommandSender a, ICommandSender b) {
+        if (a == null || b == null) return false;
+        if (a == b) return true;
+        if (a instanceof EntityLivingBase && b instanceof EntityLivingBase) {
+            EntityLivingBase elA = (EntityLivingBase) a;
+            EntityLivingBase elB = (EntityLivingBase) b;
+            if (elA.isOnSameTeam(elB)) return true;
+            if (elA.getTeam() instanceof ScorePlayerTeam && elB.getTeam() instanceof ScorePlayerTeam) {
+                ScorePlayerTeam sptA = (ScorePlayerTeam) elA.getTeam();
+                ScorePlayerTeam sptB = (ScorePlayerTeam) elB.getTeam();
+                if (sptA.isSameTeam(sptB)) return true;
+                String prefixA = sptA.getColorPrefix();
+                String prefixB = sptB.getColorPrefix();
+                if (prefixA != null && prefixB != null && !prefixA.isEmpty() && prefixA.equals(prefixB)) {
+                    return true;
+                }
+            }
+        }
+        String colorA = teamColor(a);
+        String colorB = teamColor(b);
+        if (colorA != null && colorB != null && !colorA.equalsIgnoreCase("f") && !colorA.equalsIgnoreCase("7") && !colorA.equalsIgnoreCase("r")) {
+            return colorA.equalsIgnoreCase(colorB);
+        }
+        return false;
     }
 
-    private static @NonNull String teamColor(@NonNull ICommandSender player) {
-        Matcher m = Pattern.compile("\u00a7(.).*\u00a7r").matcher(player.getDisplayName().getFormattedText());
-        return m.find() ? m.group(1) : "f";
+    private static String teamColor(ICommandSender player) {
+        if (player == null) return null;
+        String formatted = player.getDisplayName().getFormattedText();
+        Matcher m = Pattern.compile("\u00a7([0-9a-fk-or])").matcher(formatted);
+        return m.find() ? m.group(1) : null;
     }
 }
