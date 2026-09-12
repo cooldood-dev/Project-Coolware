@@ -117,4 +117,11 @@ public abstract class EntityPlayerSPMixin {
     public boolean editOnGround(EntityPlayerSP instance) {
         return PlayerUtil.motionEvent.onGround;
     }
+
+    @Inject(method = "onUpdateWalkingPlayer", at = @At(value = "RETURN"))
+    public void onUpdateWalkingPlayerPost(CallbackInfo ci) {
+        if (ModuleManager.isEnabled(com.github.cooldood.modules.impl.combat.KillAura.class)) {
+            com.github.cooldood.modules.impl.combat.KillAura.onPostUpdateWalkingPlayer();
+        }
+    }
 }

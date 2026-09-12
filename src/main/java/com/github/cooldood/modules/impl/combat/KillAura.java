@@ -1,5 +1,6 @@
 package com.github.cooldood.modules.impl.combat;
 
+import com.github.cooldood.bridge.net.minecraft.client.MinecraftBridge;
 import com.github.cooldood.events.SubscribeEvent;
 import com.github.cooldood.events.impl.MotionEvent;
 import com.github.cooldood.events.impl.MovementInputEvent;
@@ -87,6 +88,15 @@ public class KillAura extends Module {
 
     @RegisterSubModule(name = "Max CPS", min = 1.0, max = 20.0, increment = 1.0)
     public static double max = 12.0;
+
+    @RegisterSubModule(name = "Human Timing", description = "Gaussian click distribution with micro-jitter and fatigue rhythm")
+    public static boolean humanTiming = true;
+
+    @RegisterSubModule(name = "Hit Timing", description = "Time attacks to avoid Minecraft 1.8 damage immunity (prevents mitigations)")
+    public static boolean hitTiming = true;
+
+    @RegisterSubModule(name = "Hitbox Verification", description = "Verify crosshair is aimed on target hitbox before deploying attack")
+    public static boolean hitboxVerification = true;
 
     @RegisterSubModule(name = "Use Only Mouse", description = "Simulate mouse clicks instead of packets")
     public static boolean useOnlyMouse = false;
@@ -185,7 +195,7 @@ public class KillAura extends Module {
 
     @Override
     protected void onEnable() {
-        delay = (long) (1000.0 / getCPS());
+        delay = calculateNextDelay();
         canAttack = true;
         autoBlocking = false;
         syncTargetManagerConfig();
@@ -226,8 +236,30 @@ public class KillAura extends Module {
             minVal = maxVal;
             maxVal = temp;
         }
-        double cpsVal = MathHelper.clamp_double(minVal + (maxVal - minVal) * SECURE_RANDOM.nextDouble(), minVal, maxVal);
-        return Math.max(1.0, cpsVal);
+
+        if (!humanTiming) {
+            return Math.max(1.0, minVal + (maxVal - minVal) * SECURE_RANDOM.nextDouble());
+        }
+
+        double mean = (minVal + maxVal) / 2.0;
+        double stdDev = (maxVal - minVal) / 5.5;
+        double sample = mean + SECURE_RANDOM.nextGaussian() * stdDev;
+        double wave = Math.sin(System.currentTimeMillis() / 750.0) * (stdDev * 0.35);
+        sample += wave;
+        return MathHelper.clamp_double(sample, minVal, maxVal);
+    }
+
+    private static long calculateNextDelay() {
+        double cps = getCPS();
+        long baseDelay = (long) (1000.0 / cps);
+        if (humanTiming) {
+            long jitter = (long) ((SECURE_RANDOM.nextDouble() - 0.5) * 16.0);
+            baseDelay += jitter;
+            if (SECURE_RANDOM.nextDouble() < 0.03) {
+                baseDelay += 20 + SECURE_RANDOM.nextInt(20);
+            }
+        }
+        return Math.max(35L, baseDelay);
     }
 
     private static void syncTargetManagerConfig() {
@@ -278,16 +310,11 @@ public class KillAura extends Module {
         } else {
             unblock();
         }
-
-        attack();
     }
 
     @SubscribeEvent
     public static void onMotion(MotionEvent event) {
         hitTicks++;
-        if (target != null && canAttack) {
-            attack();
-        }
     }
 
     @SubscribeEvent
@@ -382,11 +409,11 @@ public class KillAura extends Module {
     public static double getDistanceToTarget(EntityLivingBase target) {
         if (C.p() == null || target == null) return 999.0;
         Vec3 eyes = C.p().getPositionEyes(1.0f);
-        AxisAlignedBB box = target.getEntityBoundingBox();
+        AxisAlignedBB box = target.getEntityBoundingBox().expand(0.1, 0.1, 0.1);
         double closestX = MathHelper.clamp_double(eyes.xCoord, box.minX, box.maxX);
         double closestY = MathHelper.clamp_double(eyes.yCoord, box.minY, box.maxY);
         double closestZ = MathHelper.clamp_double(eyes.zCoord, box.minZ, box.maxZ);
-        return Math.min(C.p().getDistanceToEntity(target), eyes.distanceTo(new Vec3(closestX, closestY, closestZ)));
+        return eyes.distanceTo(new Vec3(closestX, closestY, closestZ));
     }
 
     private static void autoblock() {
@@ -407,27 +434,73 @@ public class KillAura extends Module {
         canAttack = true;
     }
 
-    private static void attack() {
+    public static boolean isAimedAtTarget(EntityLivingBase target) {
+        if (C.p() == null || target == null) return false;
+
+        Vector2f rot = RotationManager.rotations != null ?
+                RotationManager.rotations :
+                new Vector2f(C.p().rotationYaw, C.p().rotationPitch);
+
+        MovingObjectPosition mop = RayCastUtils.rayCast(rot, Math.max(attackRange, swingRange));
+        if (mop != null && mop.entityHit == target) {
+            return true;
+        }
+
+        if (!rayCast) {
+            Vec3 eyes = C.p().getPositionEyes(1.0f);
+            AxisAlignedBB bb = target.getEntityBoundingBox().expand(0.15, 0.15, 0.15);
+            Vec3 look = WorldUtil.getVectorForRotation(rot.y, rot.x);
+            Vec3 reach = eyes.addVector(look.xCoord * attackRange, look.yCoord * attackRange, look.zCoord * attackRange);
+            if (bb.calculateIntercept(eyes, reach) != null) {
+                return true;
+            }
+
+            float[] needed = RotationUtils.getRotationsTo(eyes, new Vec3(target.posX, target.posY + target.getEyeHeight() * 0.75, target.posZ));
+            float yawDiff = Math.abs(MathHelper.wrapAngleTo180_float(needed[0] - rot.x));
+            float pitchDiff = Math.abs(MathHelper.wrapAngleTo180_float(needed[1] - rot.y));
+            return yawDiff <= 16.0f && pitchDiff <= 16.0f;
+        }
+
+        return false;
+    }
+
+    private static boolean isDamageable(EntityLivingBase target) {
+        if (!hitTiming) return true;
+        if (target == null) return false;
+        return target.hurtResistantTime <= 10;
+    }
+
+    public static void onPostUpdateWalkingPlayer() {
         if (C.p() == null || C.mc.playerController == null || target == null || !canAttack) return;
-        if (!hitTimerDone()) return;
 
         double dist = getDistanceToTarget(target);
-        if (dist <= attackRange && !useOnlyMouse) {
-            if (rayCast) {
-                Vector2f rot = RotationManager.rotations != null ? RotationManager.rotations : new Vector2f(C.p().rotationYaw, C.p().rotationPitch);
-                MovingObjectPosition mop = RayCastUtils.rayCast(rot, Math.max(attackRange, blockRange));
-                if (mop == null || mop.entityHit == null || mop.entityHit != target) {
-                    return;
-                }
+        if (!hitTimerDone()) return;
+
+        if (dist <= attackRange) {
+            if (hitboxVerification && !isAimedAtTarget(target)) {
+                return;
             }
-            C.p().swingItem();
-            C.mc.playerController.attackEntity(C.p(), target);
+
+            if (!isDamageable(target)) {
+                return;
+            }
+
+            if (useOnlyMouse) {
+                C.p().swingItem();
+                MinecraftBridge.from(C.mc).bridge$clickMouse();
+            } else {
+                C.p().swingItem();
+                C.mc.playerController.attackEntity(C.p(), target);
+            }
+
             if (mode == Mode.Switch && switchOnHit) {
                 TargetManager.switchTarget();
             }
+
             if (rotations == Rotations.Polar) {
                 PolarRotationManager.triggerFlick((float) polarFlickChance);
             }
+
             if (sprint) {
                 if (!hypixelSprint) {
                     C.p().setSprinting(true);
@@ -435,17 +508,22 @@ public class KillAura extends Module {
                     C.p().setSprinting(true);
                 }
             }
+
             hitTicks = 0;
+            delay = calculateNextDelay();
+            attackTimer.reset();
         } else if (dist <= swingRange) {
             C.p().swingItem();
             hitTicks = 0;
+            delay = calculateNextDelay();
+            attackTimer.reset();
         }
     }
 
     private static boolean hitTimerDone() {
         if (attackTimer.hasTimeElapsed(delay, false)) {
             attackTimer.reset();
-            delay = (long) (1000.0 / getCPS());
+            delay = calculateNextDelay();
             return true;
         }
         return false;
