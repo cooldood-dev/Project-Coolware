@@ -4,7 +4,6 @@ import com.github.cooldood.bridge.net.minecraft.client.MinecraftBridge;
 import com.github.cooldood.events.SubscribeEvent;
 import com.github.cooldood.events.impl.ClickMouseEvent;
 import com.github.cooldood.events.impl.MotionEvent;
-import com.github.cooldood.events.impl.MovementInputEvent;
 import com.github.cooldood.events.impl.PacketEvent;
 import com.github.cooldood.events.impl.RespawnEvent;
 import com.github.cooldood.events.impl.RotationEvent;
@@ -71,14 +70,17 @@ public class KillAura extends Module {
     @RegisterSubModule(name = "Switch On Hit", description = "Switch target immediately after attacking")
     public static boolean switchOnHit = true;
 
+    @RegisterSubModule(name = "Grim Safe", description = "Enforce strict 3.0 reach limit, exact sent packet raycast, and GCD alignment to bypass GrimAC")
+    public static boolean grimSafe = true;
+
     @RegisterSubModule(name = "Seek Range", min = 3.0, max = 8.0, increment = 0.1)
     public static double seekRange = 6.0;
 
-    @RegisterSubModule(name = "Attack Range", min = 3.0, max = 6.0, increment = 0.1)
-    public static double attackRange = 4.2;
+    @RegisterSubModule(name = "Attack Range", min = 2.0, max = 6.0, increment = 0.05, description = "Attack reach in blocks (3.0 max on Grim)")
+    public static double attackRange = 3.0;
 
-    @RegisterSubModule(name = "Swing Range", min = 3.0, max = 8.0, increment = 0.1)
-    public static double swingRange = 4.5;
+    @RegisterSubModule(name = "Swing Range", min = 2.0, max = 8.0, increment = 0.05, description = "Swing reach in blocks")
+    public static double swingRange = 3.2;
 
     @RegisterSubModule(name = "Block Range", min = 3.0, max = 8.0, increment = 0.1)
     public static double blockRange = 5.0;
@@ -143,17 +145,8 @@ public class KillAura extends Module {
     @RegisterSubModule(name = "Polar Flick Chance", min = 0.0, max = 100.0, increment = 1.0)
     public static double polarFlickChance = 50.0;
 
-    @RegisterSubModule(name = "Ray Cast")
-    public static boolean rayCast = false;
-
-    @RegisterSubModule(name = "Move Fix")
-    public static MoveFix fix = MoveFix.Silent;
-
-    public enum MoveFix {
-        None,
-        Strict,
-        Silent
-    }
+    @RegisterSubModule(name = "Ray Cast", description = "Only attack when crosshair intersects target hitbox")
+    public static boolean rayCast = true;
 
     @RegisterSubModule(name = "Keep Sprint")
     public static boolean sprint = false;
@@ -309,25 +302,6 @@ public class KillAura extends Module {
     }
 
     @SubscribeEvent
-    public static void onMovementInput(MovementInputEvent event) {
-        if (target == null || fix == MoveFix.None || !RotationManager.isActive() || RotationManager.rotations == null) return;
-        float yaw = RotationManager.rotations.x;
-        if (fix == MoveFix.Strict) {
-            Vector2f currentCamera = new Vector2f(C.p().rotationYaw, C.p().rotationPitch);
-            float targetYaw = currentCamera.x + MathHelper.wrapAngleTo180_float(yaw - currentCamera.x);
-            float targetPitch = currentCamera.y + MathHelper.wrapAngleTo180_float(RotationManager.rotations.y - currentCamera.y);
-            double speed = MathUtils.getRandom(minRotSpeed, maxRotSpeed) * 3.5;
-            Vector2f smoothed = RotationUtils.smooth(currentCamera, new Vector2f(targetYaw, targetPitch), speed);
-            C.p().rotationYaw = smoothed.x;
-            C.p().rotationPitch = MathHelper.clamp_float(smoothed.y, -90.0F, 90.0F);
-            C.p().rotationYawHead = smoothed.x;
-            MoveUtils.fixMovement(event, yaw);
-        } else if (fix == MoveFix.Silent) {
-            MoveUtils.fixMovement(event, yaw);
-        }
-    }
-
-    @SubscribeEvent
     public static void onWorldUnload(WorldUnloadEvent event) {
         resetCombatState();
         if (autoDisable) {
@@ -374,11 +348,7 @@ public class KillAura extends Module {
             rotation = RotationUtils.calculate(target, false, seekRange);
         }
 
-        RotationManager.MovementFix fixMode = (fix != MoveFix.None) ?
-                (fix == MoveFix.Silent ? RotationManager.MovementFix.NORMAL : RotationManager.MovementFix.TRADITIONAL) :
-                RotationManager.MovementFix.OFF;
-
-        RotationManager.setRotations(rotation, rotSpeed, fixMode);
+        RotationManager.setRotations(rotation, rotSpeed, RotationManager.MovementFix.OFF);
     }
 
     private static Vector2f getWholeBodyRotation(EntityLivingBase entity) {
@@ -441,14 +411,20 @@ public class KillAura extends Module {
 
         if (!hitTimerDone()) return;
 
+        double effectiveAttackRange = grimSafe ? Math.min(attackRange, 3.0) : attackRange;
+        double effectiveSwingRange = Math.max(effectiveAttackRange, swingRange);
         double dist = getDistanceToTarget(target);
-        if (dist <= attackRange) {
-            if (rayCast) {
-                Vector2f rot = RotationManager.rotations != null ?
-                        RotationManager.rotations :
-                        new Vector2f(C.p().rotationYaw, C.p().rotationPitch);
-                MovingObjectPosition mop = RayCastUtils.rayCast(rot, Math.max(attackRange, blockRange));
+        if (dist <= effectiveAttackRange) {
+            Vec3 eyes = C.p().getPositionEyes(1.0f);
+            if (rayCast || grimSafe) {
+                Vector2f serverRot = PlayerUtil.currentRotation() != null ?
+                        new Vector2f(PlayerUtil.currentRotation().yaw, PlayerUtil.currentRotation().pitch) :
+                        (RotationManager.rotations != null ? RotationManager.rotations : new Vector2f(C.p().rotationYaw, C.p().rotationPitch));
+                MovingObjectPosition mop = RayCastUtils.rayCast(serverRot, effectiveAttackRange);
                 if (mop == null || mop.entityHit == null || mop.entityHit != target) {
+                    return;
+                }
+                if (mop.hitVec != null && eyes.distanceTo(mop.hitVec) > effectiveAttackRange) {
                     return;
                 }
             }
@@ -478,7 +454,7 @@ public class KillAura extends Module {
             }
 
             hitTicks = 0;
-        } else if (dist <= swingRange) {
+        } else if (dist <= effectiveSwingRange) {
             C.p().swingItem();
             hitTicks = 0;
         }

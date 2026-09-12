@@ -115,8 +115,11 @@ public class RotationUtil {
 
     @SubscribeEvent(priority = 9999)
     public static void onRotationTAIL(RotationEvent event) {
-        if (C.p().ticksExisted > 0) {
-            applyGcd(PlayerUtil.lastRotation(), event.rotation);
+        if (C.p() != null && C.p().ticksExisted > 0 && event.rotation != null) {
+            RotationUtil.Rotation last = PlayerUtil.lastRotation();
+            if (last != null) {
+                event.rotation = applyGcd(last, event.rotation);
+            }
         }
     }
 

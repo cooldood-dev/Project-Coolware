@@ -15,7 +15,7 @@ import net.minecraft.entity.Entity;
         name = "Movement Fix",
         description = "Provides Movement Fix functionality for the client.",
         category = Category.CLIENT,
-        enabledByDefault = true
+        enabledByDefault = false
 )
 public class MovementFix extends Module {
     @RegisterSubModule(name = "Fix Movement", description = "Fixes movement client side to be accurate to the server side rotation")
@@ -39,25 +39,23 @@ public class MovementFix extends Module {
                 && ModuleManager.isEnabled(MovementFix.class)
                 && !ModuleManager.isEnabled(Freecam.class);
     }
+
     public static boolean shouldRotationFix() {
         return ((rotationFix && ModuleManager.isEnabled(MovementFix.class))
                 || (Scaffold.isShouldScaffold() && Scaffold.manualPlace))
                 && !ModuleManager.isEnabled(Freecam.class);
     }
 
-    // goes first to allow the inputs to be modified later
     @SubscribeEvent(priority = 1)
     public static void onMovementInputEvent(MovementInputEvent event) {
         if (!shouldMoveFix(C.p())) return;
         if (moveFixMode == MoveFixMode.Vanilla) return;
 
         float speed = Math.max(Math.abs(event.movementInput.moveForward), Math.abs(event.movementInput.moveStrafe));
-        // make sure ur moving
         if (speed == 0) return;
 
         MovementDirection fixedMovementDirection = getMovementDirection(event);
 
-        // fix movement direction to one closest to rotation
         event.movementInput.moveForward = fixedMovementDirection.forward ? speed : (fixedMovementDirection.back ? -speed : 0);
         event.movementInput.moveStrafe = fixedMovementDirection.left ? speed : (fixedMovementDirection.right ? -speed : 0);
     }
@@ -71,14 +69,12 @@ public class MovementFix extends Module {
             yawDifference += yawDeficitAdded;
             yawDeficit -= yawDeficitAdded;
 
-            // calculate how much yaw precision we have lost.
             yawDeficit += MathUtil.toNearest(yawDifference, 45) - yawDifference;
         }
         else yawDifference += yawDifference < 0 ? -22.5f : 22.5f;
 
         int yawOrdinal = Math.floorMod((int) (yawDifference / 45), MovementDirection.values().length);
 
-        // get move direction
         MovementDirection inputMoveDirection = event.movementInput.moveStrafe < 0 ? MovementDirection.EAST : MovementDirection.WEST;
         if (event.movementInput.moveForward > 0) inputMoveDirection = event.movementInput.moveStrafe < 0 ? MovementDirection.NORTH_EAST : (event.movementInput.moveStrafe > 0 ? MovementDirection.NORTH_WEST : MovementDirection.NORTH);
         if (event.movementInput.moveForward < 0) inputMoveDirection = event.movementInput.moveStrafe < 0 ? MovementDirection.SOUTH_EAST : (event.movementInput.moveStrafe > 0 ? MovementDirection.SOUTH_WEST : MovementDirection.SOUTH);

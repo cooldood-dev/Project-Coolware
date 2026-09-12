@@ -36,7 +36,7 @@ public class RayCastUtils {
         );
 
         for (Entity entity1 : list) {
-            float f1 = entity1.getCollisionBorderSize() + 0.15F;
+            float f1 = entity1.getCollisionBorderSize();
             AxisAlignedBB axisalignedbb = entity1.getEntityBoundingBox().expand(f1, f1, f1);
             MovingObjectPosition intercept = axisalignedbb.calculateIntercept(eyes, reach);
 
