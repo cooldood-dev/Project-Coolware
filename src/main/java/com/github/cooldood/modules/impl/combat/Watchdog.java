@@ -84,6 +84,11 @@ public class Watchdog extends Module {
 
     @SubscribeEvent(priority = 997)
     public static void onPlayerUpdate(PlayerUpdateEvent event) {
+        if (ModuleManager.isEnabled(KillAura.class) && KillAura.shouldPreventServerBlock()) {
+            stopBlocking();
+            return;
+        }
+
         if (!C.isInGame() || C.p().isDead) {
             stopBlocking();
             return;

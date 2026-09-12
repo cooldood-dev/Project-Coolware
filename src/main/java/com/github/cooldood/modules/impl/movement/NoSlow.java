@@ -4,6 +4,7 @@ import com.github.cooldood.modules.Category;
 import com.github.cooldood.modules.Module;
 import com.github.cooldood.modules.ModuleManager;
 import com.github.cooldood.modules.RegisterModule;
+import com.github.cooldood.modules.impl.combat.KillAura;
 import com.github.cooldood.utils.client.C;
 import com.github.cooldood.utils.minecraft.PlayerUtil;
 
@@ -15,6 +16,9 @@ import com.github.cooldood.utils.minecraft.PlayerUtil;
 )
 public class NoSlow extends Module {
     public static boolean shouldSlowDown() {
+        if (KillAura.shouldPreventServerBlock()) {
+            return false;
+        }
         return !ModuleManager.isEnabled(NoSlow.class) && ((C.p() != null && C.p().isUsingItem()) || com.github.cooldood.modules.impl.combat.Watchdog.isModuleBlocking());
     }
 

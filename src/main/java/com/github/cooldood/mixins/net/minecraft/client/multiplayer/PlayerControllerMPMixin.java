@@ -3,9 +3,15 @@ package com.github.cooldood.mixins.net.minecraft.client.multiplayer;
 import com.github.cooldood.bridge.net.minecraft.client.multiplayer.PlayerControllerMPBridge;
 import com.github.cooldood.events.Bus;
 import com.github.cooldood.events.impl.AttackBlockEvent;
+import com.github.cooldood.modules.impl.combat.KillAura;
+import com.github.cooldood.utils.client.C;
 import net.minecraft.client.multiplayer.PlayerControllerMP;
+import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.ItemSword;
 import net.minecraft.util.BlockPos;
 import net.minecraft.util.EnumFacing;
+import net.minecraft.world.World;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -20,6 +26,15 @@ public class PlayerControllerMPMixin implements PlayerControllerMPBridge {
     @Inject(method = "clickBlock", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/network/NetHandlerPlayClient;addToSendQueue(Lnet/minecraft/network/Packet;)V", ordinal = 2))
     private void onClickBlock(BlockPos loc, EnumFacing face, CallbackInfoReturnable<Boolean> cir) {
         Bus.post(new AttackBlockEvent(loc));
+    }
+
+    @Inject(method = "sendUseItem", at = @At("HEAD"), cancellable = true)
+    private void onSendUseItem(EntityPlayer playerIn, World worldIn, ItemStack itemStackIn, CallbackInfoReturnable<Boolean> cir) {
+        if (playerIn == C.p() && itemStackIn != null && itemStackIn.getItem() instanceof ItemSword) {
+            if (KillAura.shouldPreventServerBlock()) {
+                cir.setReturnValue(false);
+            }
+        }
     }
 
     @Override

@@ -2,8 +2,10 @@ package com.github.cooldood.modules.impl.combat;
 
 import com.github.cooldood.bridge.net.minecraft.client.MinecraftBridge;
 import com.github.cooldood.events.SubscribeEvent;
+import com.github.cooldood.events.impl.ClickMouseEvent;
 import com.github.cooldood.events.impl.MotionEvent;
 import com.github.cooldood.events.impl.MovementInputEvent;
+import com.github.cooldood.events.impl.PacketEvent;
 import com.github.cooldood.events.impl.RespawnEvent;
 import com.github.cooldood.events.impl.RotationEvent;
 import com.github.cooldood.events.impl.WorldUnloadEvent;
@@ -19,9 +21,15 @@ import com.github.cooldood.modules.RegisterSubModule;
 import com.github.cooldood.utils.client.C;
 import com.github.cooldood.utils.minecraft.*;
 import lombok.Getter;
+import net.minecraft.block.Block;
+import net.minecraft.block.BlockContainer;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
+import net.minecraft.item.ItemSword;
+import net.minecraft.network.play.client.C07PacketPlayerDigging;
+import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.util.AxisAlignedBB;
+import net.minecraft.util.BlockPos;
 import net.minecraft.util.MathHelper;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.Vec3;
@@ -82,6 +90,9 @@ public class KillAura extends Module {
         Fake,
         None
     }
+
+    @RegisterSubModule(name = "No Server Block", description = "Completely prevent server-side sword blocking packets and item-use slowdown")
+    public static boolean noServerBlock = true;
 
     @RegisterSubModule(name = "Min CPS", min = 1.0, max = 20.0, increment = 1.0)
     public static double min = 8.0;
@@ -189,6 +200,10 @@ public class KillAura extends Module {
         return ModuleManager.isEnabled(KillAura.class) && autoBlocking && InvUtils.isHoldingSword();
     }
 
+    public static boolean shouldPreventServerBlock() {
+        return ModuleManager.isEnabled(KillAura.class) && (ab == AutoBlock.Fake || noServerBlock) && InvUtils.isHoldingSword();
+    }
+
     private static EntityLivingBase lastTarget;
     private static Vec3 smoothedBodyPoint;
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
@@ -215,6 +230,9 @@ public class KillAura extends Module {
             unblock();
         } else {
             canAttack = true;
+        }
+        if (C.p() != null && C.p().isUsingItem() && InvUtils.isHoldingSword()) {
+            C.p().clearItemInUse();
         }
         target = null;
         lastTarget = null;
@@ -283,6 +301,10 @@ public class KillAura extends Module {
         if (C.p() == null || C.w() == null) {
             if (target != null || autoBlocking) resetCombatState();
             return;
+        }
+
+        if (shouldPreventServerBlock() && C.p().isUsingItem()) {
+            C.p().clearItemInUse();
         }
 
         syncTargetManagerConfig();
@@ -473,6 +495,10 @@ public class KillAura extends Module {
     public static void onPostUpdateWalkingPlayer() {
         if (C.p() == null || C.mc.playerController == null || target == null || !canAttack) return;
 
+        if (shouldPreventServerBlock() && C.p().isUsingItem()) {
+            C.p().clearItemInUse();
+        }
+
         double dist = getDistanceToTarget(target);
         if (!hitTimerDone()) return;
 
@@ -541,6 +567,41 @@ public class KillAura extends Module {
         return C.w().rayTraceBlocks(eyes, head, false, false, false) == null
                 || C.w().rayTraceBlocks(eyes, chest, false, false, false) == null
                 || C.w().rayTraceBlocks(eyes, feet, false, false, false) == null;
+    }
+
+    @SubscribeEvent(priority = 1)
+    public static void onPacketSend(PacketEvent.Send event) {
+        if (!shouldPreventServerBlock()) return;
+
+        if (event.packet instanceof C08PacketPlayerBlockPlacement) {
+            C08PacketPlayerBlockPlacement p = (C08PacketPlayerBlockPlacement) event.packet;
+            if (p.getPlacedBlockDirection() == 255
+                    || (p.getPosition() != null && p.getPosition().getY() <= 0)
+                    || (p.getStack() != null && p.getStack().getItem() instanceof ItemSword)) {
+                event.setCancelled(true);
+            }
+        } else if (event.packet instanceof C07PacketPlayerDigging) {
+            C07PacketPlayerDigging p = (C07PacketPlayerDigging) event.packet;
+            if (p.getStatus() == C07PacketPlayerDigging.Action.RELEASE_USE_ITEM && InvUtils.isHoldingSword()) {
+                event.setCancelled(true);
+            }
+        }
+    }
+
+    @SubscribeEvent(priority = 1)
+    public static void onRightClick(ClickMouseEvent.Right event) {
+        if (!shouldPreventServerBlock()) return;
+
+        if (C.mc.objectMouseOver != null && C.mc.objectMouseOver.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) {
+            BlockPos pos = C.mc.objectMouseOver.getBlockPos();
+            if (C.w() != null) {
+                Block b = C.w().getBlockState(pos).getBlock();
+                if (b instanceof BlockContainer) {
+                    return;
+                }
+            }
+        }
+        event.setCancelled(true);
     }
 
     @Override
