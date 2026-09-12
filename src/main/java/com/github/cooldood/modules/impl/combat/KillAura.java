@@ -8,6 +8,7 @@ import com.github.cooldood.events.impl.PlayerUpdateEvent;
 import com.github.cooldood.events.impl.RotationEvent;
 import com.github.cooldood.modules.*;
 import com.github.cooldood.utils.client.C;
+import com.github.cooldood.utils.minecraft.AntiBotUtil;
 import com.github.cooldood.utils.minecraft.PacketUtil;
 import com.github.cooldood.utils.minecraft.RotationUtil;
 import lombok.Getter;
@@ -424,6 +425,8 @@ public class KillAura extends Module {
         if (entity == null || entity == C.p()) return false;
         if (entity.isDead || entity.getHealth() <= 0) return false;
         if (entity instanceof EntityArmorStand) return false;
+        if (AntiBot.isBot(entity)) return false;
+        if (AntiBotUtil.isTeam(entity, false)) return false;
         if (!targetInvisibles && entity.isInvisible()) return false;
         if (entity instanceof EntityPlayer && !targetPlayers) return false;
         if (entity instanceof EntityMob    && !targetMobs)    return false;
