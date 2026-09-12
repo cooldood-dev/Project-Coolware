@@ -528,7 +528,7 @@ public class KillAura extends Module {
 
     @SubscribeEvent(priority = 1)
     public static void onRightClick(ClickMouseEvent.Right event) {
-        if (!shouldPreventServerBlock()) return;
+        if (!shouldPreventServerBlock() || !autoBlocking) return;
 
         if (C.mc.objectMouseOver != null && C.mc.objectMouseOver.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) {
             BlockPos pos = C.mc.objectMouseOver.getBlockPos();

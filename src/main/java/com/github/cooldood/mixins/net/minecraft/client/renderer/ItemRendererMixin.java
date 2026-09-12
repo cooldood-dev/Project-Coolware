@@ -69,7 +69,8 @@ public abstract class ItemRendererMixin {
     )
     private void skipTransform(ItemRenderer instance, float f1, float f2) {
         if (!ModuleManager.isEnabled(Animations.class)) {
-            transformFirstPersonItem(f1, f2);
+            float swingProgress = C.p() != null ? C.p().getSwingProgress(1.0F) : f2;
+            transformFirstPersonItem(f1, swingProgress);
         }
     }
 

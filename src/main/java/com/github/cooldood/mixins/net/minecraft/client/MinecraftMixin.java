@@ -39,6 +39,7 @@ public abstract class MinecraftMixin implements MinecraftBridge {
     @Shadow protected abstract void sendClickBlockToController(boolean leftClick);
     @Shadow private int rightClickDelayTimer;
     @Shadow public MovingObjectPosition objectMouseOver;
+    @Shadow private int leftClickCounter;
 
     @Inject(method = "runTick", at = @At(value = "HEAD"))
     public void onRunTick(CallbackInfo ci) {
@@ -84,6 +85,7 @@ public abstract class MinecraftMixin implements MinecraftBridge {
 
     @Inject(method = "clickMouse", at = @At("HEAD"), cancellable = true)
     private void clickMouse(CallbackInfo ci) {
+        this.leftClickCounter = 0;
         if (Bus.post(new ClickMouseEvent.Left())) ci.cancel();
     }
 
@@ -94,13 +96,21 @@ public abstract class MinecraftMixin implements MinecraftBridge {
 
     @Redirect(method = "runTick", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/settings/KeyBinding;isPressed()Z", ordinal = 7))
     public boolean onAttemptClick(KeyBinding instance) {
-        if (!PlayerUtil.canAttack()) return false;
-        return instance.isPressed();
+        boolean isPressed = instance.isPressed();
+        if (isPressed) {
+            this.leftClickCounter = 0;
+            this.clickMouse();
+        }
+        return isPressed;
     }
 
     @Redirect(method = "runTick", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/settings/KeyBinding;isPressed()Z", ordinal = 10))
     public boolean onSuccessfulClick(KeyBinding instance) {
-        return instance.isPressed();
+        boolean isPressed = instance.isPressed();
+        if (isPressed) {
+            this.leftClickCounter = 0;
+        }
+        return isPressed;
     }
 
     // blehhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
