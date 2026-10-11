@@ -1,0 +1,1191 @@
+package coolware.module.movement;
+
+import coolware.module.Category;
+import coolware.module.Module;
+import coolware.setting.BooleanSetting;
+import coolware.setting.ModeSetting;
+import coolware.setting.NumberSetting;
+import coolware.util.InventoryUtil;
+import coolware.util.RotationUtil;
+import coolware.util.WorldUtil;
+import net.minecraft.block.Block;
+import net.minecraft.block.BlockAnvil;
+import net.minecraft.block.BlockBed;
+import net.minecraft.block.BlockButton;
+import net.minecraft.block.BlockContainer;
+import net.minecraft.block.BlockDoor;
+import net.minecraft.block.BlockFence;
+import net.minecraft.block.BlockFenceGate;
+import net.minecraft.block.BlockLever;
+import net.minecraft.block.BlockTrapDoor;
+import net.minecraft.block.BlockWorkbench;
+import net.minecraft.block.material.Material;
+import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.client.multiplayer.WorldClient;
+import net.minecraft.client.settings.GameSettings;
+import net.minecraft.client.settings.KeyBinding;
+import net.minecraft.item.ItemStack;
+import net.minecraft.util.BlockPos;
+import net.minecraft.util.MathHelper;
+import net.minecraft.util.MovingObjectPosition;
+import net.minecraft.util.Vec3;
+import org.lwjgl.input.Keyboard;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Random;
+import java.util.function.BooleanSupplier;
+
+/**
+ * Scaffold, as Rise 6 does it (github.com/NoHackClient/Rise-6.9.5): the nearest
+ * open block next to something solid, the face of that neighbour that faces you,
+ * and an aim that is only moved when it stops landing on that face.
+ *
+ *   Normal  keep the aim on the face; re-aim only when it falls off.
+ *   Snap    look where you walk; ride a sigmoid curve onto the face for the
+ *           placement, then ease back out to the way you walk.
+ *   Telly   sprint-jump, look ahead until the jump is Turn Height up, then turn
+ *           back, always round the same shoulder, to straight behind you. There
+ *           the yaw holds and only the pitch moves: onto the face, then creeping
+ *           lower while it places, until the jump's last block is in; then
+ *           unwind the same arc forward.
+ *
+ * Hypixel Mode (Snap and Telly) picks the aim one of two ways:
+ *   Edge     the face's far edge while you walk (LiquidBounce's EdgePoint).
+ *   Raycast  whole-degree looks only, searched out from a base yaw (behind you,
+ *            or your side as Watchdog3 does) and the pitch you have; the first
+ *            that still lands on the face once on the mouse grid.
+ *
+ * Any mode: Same Y holds the layer you started on while you're in the air
+ * without holding jump; Predict Eye wants each place to land from where the
+ * move takes your eyes this tick as well; Watchdog Tower (Cryptix's) holds the
+ * place and faces your walk while you hold jump on the ground; Sneak (Normal, Snap) sneaks on an edge
+ * until the block is in; Block Count shows the blocks you have left.
+ *
+ * Runs in onUpdate, which Coolware calls before the player's update, so the look
+ * set here is the one this tick's movement packet carries. The look is written
+ * to RotationUtil as is -- already on the mouse grid -- so the ray cast that
+ * gates each place sees exactly what is sent.
+ *
+ * Ported from the C++ client's ScaffoldModule.
+ */
+public class Scaffold extends Module {
+    private static Scaffold instance;
+
+    private static final int NORMAL = 0, SNAP = 1, TELLY = 2;
+
+    // EnumFacing order: down, up, north, south, west, east.
+    private static final int FACING_DOWN = 0, FACING_UP = 1;
+    private static final int[] OFFSET_X = { 0, 0, 0, 0, -1, 1 };
+    private static final int[] OFFSET_Y = { -1, 1, 0, 0, 0, 0 };
+    private static final int[] OFFSET_Z = { 0, 0, -1, 1, 0, 0 };
+
+    private static final double REACH = 4.5;
+
+    private final Random random = new Random();
+
+    // -- settings ----------------------------------------------------------------
+
+    private final ModeSetting mode;
+
+    private final BooleanSetting swing;
+    private final NumberSetting placeDelay;
+    private final NumberSetting aimRandomness;
+    private final NumberSetting turnSpeed;
+    private final BooleanSetting sprint;
+    private final BooleanSetting switchBack;
+    private final BooleanSetting hypixel;
+    private final ModeSetting hypixelAim;
+    private final ModeSetting raycastBase;
+    private final BooleanSetting predictEye;
+    private final BooleanSetting tower;
+    private final BooleanSetting sneak;
+    private final NumberSetting sneakDelay;
+    private final BooleanSetting blockCount;
+    private final BooleanSetting sameY;
+
+    private final NumberSetting easeTicks;
+    private final NumberSetting steepness;
+
+    private final BooleanSetting autoJump;
+    private final NumberSetting jumpDelay;
+    private final NumberSetting turnHeight;
+    private final ModeSetting turnSide;
+    private final NumberSetting lastTick;
+    private final BooleanSetting randomizeTicks;
+    private final NumberSetting forwardPitch;
+    private final NumberSetting lookJitter;
+
+    // -- state -------------------------------------------------------------------
+
+    private float targetYaw, targetPitch;
+
+    // The turn sent last tick, and the one a block was last placed with: a place
+    // repeating either exactly is what Grim's DuplicateRotPlace flags.
+    private float prevTurnYaw, prevTurnPitch;
+    private float placeTurnYaw, placeTurnPitch;
+    private int ticksOnAir;
+    private int offGroundTicks;
+    private int onGroundTicks;
+    private double startY;
+    private double jumpY;
+    private boolean turnedBack;
+    private int oldSlot = -1;
+    private boolean pressingJump;
+    private boolean pressingSneak;
+    private int sneakTicks;
+    private boolean holdingSprint;
+    private int blocksLeft;
+    private WorldClient world;
+
+    // Snap's eased look.
+    private boolean easing;
+    private int easeTick, easeLength = 1;
+    private float easeFromYaw, easeFromPitch;
+    private float easeGoalYaw, easeGoalPitch;
+
+    // Telly's cadence, picked once per landing.
+    private float turnHeightWobble = 1.0F;
+    private float backYawOffset;
+    private int lastTickWobble = 10;
+    private int jumpDelayTicks;
+
+    public Scaffold() {
+        super("Scaffold", "Automatically places blocks below you.", Category.MOVEMENT, Keyboard.KEY_NONE);
+        instance = this;
+
+        mode = new ModeSetting("Mode", this, "Normal", "Normal", "Snap", "Telly");
+
+        final BooleanSupplier isSnap = () -> mode.getIndex() == SNAP;
+        final BooleanSupplier isTelly = () -> mode.getIndex() == TELLY;
+        final BooleanSupplier notTelly = () -> mode.getIndex() != TELLY;
+        final BooleanSupplier always = () -> true;
+
+        swing = bool("Swing", true, always);
+        placeDelay = number("Place Delay", 1, 1, 10, 1, always);
+        aimRandomness = number("Aim Randomness", 0.1, 0, 1, 0.01, always);
+        turnSpeed = number("Turn Speed", 75, 0, 180, 1, () -> mode.getIndex() != SNAP);
+        sprint = bool("Sprint", true, notTelly);
+        switchBack = bool("Switch Back", true, always);
+        hypixel = bool("Hypixel Mode", false, () -> mode.getIndex() != NORMAL);
+        hypixelAim = mode("Hypixel Aim", "Edge", () -> mode.getIndex() != NORMAL && hypixel.isEnabled(), "Edge", "Raycast");
+        raycastBase = mode("Raycast Base", "Back",
+                () -> mode.getIndex() != NORMAL && hypixel.isEnabled() && hypixelAim.is("Raycast"), "Back", "Side");
+        predictEye = bool("Predict Eye", false, always);
+        tower = bool("Watchdog Tower", false, always);
+        sneak = bool("Sneak", false, notTelly);
+        sneakDelay = number("Sneak Delay", 2, 0, 10, 1, () -> mode.getIndex() != TELLY && sneak.isEnabled());
+        blockCount = bool("Block Count", true, always);
+        sameY = bool("Same Y", true, always);
+
+        easeTicks = number("Ease Ticks", 3, 1, 8, 1, isSnap);
+        steepness = number("Steepness", 6, 2, 12, 0.1, isSnap);
+
+        autoJump = bool("Auto Jump", true, isTelly);
+        jumpDelay = number("Jump Delay", 1, 0, 5, 1, () -> mode.getIndex() == TELLY && autoJump.isEnabled());
+        turnHeight = number("Turn Height", 1.0, 0.4, 1.2, 0.01, isTelly);
+        turnSide = mode("Turn Side", "Right", isTelly, "Right", "Left");
+        lastTick = number("Last Tick", 10, 5, 20, 1, isTelly);
+        randomizeTicks = bool("Randomize Ticks", true, isTelly);
+        forwardPitch = number("Forward Pitch", 12, -30, 60, 0.5, isTelly);
+        lookJitter = number("Look Jitter", 1.5, 0, 5, 0.1, isTelly);
+    }
+
+    private BooleanSetting bool(String name, boolean value, final BooleanSupplier shown) {
+        return new BooleanSetting(name, this, value) {
+            @Override
+            public boolean isVisible() {
+                return shown.getAsBoolean();
+            }
+        };
+    }
+
+    private NumberSetting number(String name, double value, double min, double max, double step, final BooleanSupplier shown) {
+        return new NumberSetting(name, this, value, min, max, step) {
+            @Override
+            public boolean isVisible() {
+                return shown.getAsBoolean();
+            }
+        };
+    }
+
+    private ModeSetting mode(String name, String value, final BooleanSupplier shown, String... modes) {
+        return new ModeSetting(name, this, value, modes) {
+            @Override
+            public boolean isVisible() {
+                return shown.getAsBoolean();
+            }
+        };
+    }
+
+    // -- hooks for EntityPlayerSP / MovementFixUtil ------------------------------
+
+    /** Sprint off: walk while bridging. The sprint key is held up meanwhile. */
+    private boolean holdsSprint() {
+        return isToggled() && mode.getIndex() != TELLY && !sprint.isEnabled();
+    }
+
+    /** Vanilla sprinting stays allowed under Scaffold's silent look (the move fix turns it off when you face away). */
+    public static boolean sprintAllowed() {
+        return instance != null && instance.isToggled() && !instance.holdsSprint();
+    }
+
+    /** Scaffold's look is silent: the keys are walked relative to it, as the C++ client's Silent correction does. */
+    public static boolean wantsMoveFix() {
+        return instance != null && instance.isToggled() && RotationUtil.silentActive;
+    }
+
+    // -- small types -------------------------------------------------------------
+
+    private static final class Look {
+        final float yaw, pitch;
+
+        Look(float yaw, float pitch) {
+            this.yaw = yaw;
+            this.pitch = pitch;
+        }
+    }
+
+    private static final class Placement {
+        final int tx, ty, tz;   // the open block to fill
+        final int fx, fy, fz;   // the solid one to click
+        final int facing;       // the side of it that faces the open one
+
+        Placement(int tx, int ty, int tz, int fx, int fy, int fz, int facing) {
+            this.tx = tx; this.ty = ty; this.tz = tz;
+            this.fx = fx; this.fy = fy; this.fz = fz;
+            this.facing = facing;
+        }
+    }
+
+    private static final class Hit {
+        boolean block;
+        int x, y, z, side;
+        MovingObjectPosition raw;
+    }
+
+    // The looks that can reach a face: a grid of points over it, aimed at from
+    // the eyes, gives the yaw span (around the middle's yaw) and pitch span.
+    private static final class FaceSpan {
+        static final float MARGIN = 1.5F;   // the grid and the patch move a look this far at most
+
+        Look center;
+        float yawLo, yawHi, pitchLo = 90.0F, pitchHi = -90.0F;
+        boolean anyYaw;   // over the face (looking down on a top): every yaw reaches it
+
+        boolean reachesYaw(float yaw) {
+            float d = angleDifference(yaw, center.yaw);
+            return anyYaw || (d >= yawLo - MARGIN && d <= yawHi + MARGIN);
+        }
+
+        boolean reachesPitch(float pitch) {
+            return pitch >= pitchLo - MARGIN && pitch <= pitchHi + MARGIN;
+        }
+    }
+
+    // -- math --------------------------------------------------------------------
+
+    private static float angleDifference(float target, float from) {
+        return MathHelper.wrapAngleTo180_float(target - from);
+    }
+
+    private static int floor(double value) {
+        return MathHelper.floor_double(value);
+    }
+
+    private static double sigmoid(double x) {
+        return 1.0 / (1.0 + Math.exp(-x));
+    }
+
+    // A logistic curve rescaled so 0 lands on 0 and 1 on 1: slow to leave,
+    // fastest through the middle, settling into the goal like a mouse flick.
+    private static double sigmoidEase(double t, double steepness) {
+        double k = Math.max(1.0, steepness);
+        double lo = sigmoid(-0.5 * k), hi = sigmoid(0.5 * k);
+        return (sigmoid(k * (t - 0.5)) - lo) / (hi - lo);
+    }
+
+    private static Look rotationTo(Vec3 eye, double x, double y, double z) {
+        double dx = x - eye.xCoord, dy = y - eye.yCoord, dz = z - eye.zCoord;
+        double flat = Math.sqrt(dx * dx + dz * dz);
+        return new Look((float) Math.toDegrees(Math.atan2(dz, dx)) - 90.0F, (float) -Math.toDegrees(Math.atan2(dy, flat)));
+    }
+
+    private static Vec3 faceCenter(int x, int y, int z, int facing) {
+        return new Vec3(x + 0.5 + OFFSET_X[facing] * 0.5, y + 0.5 + OFFSET_Y[facing] * 0.5, z + 0.5 + OFFSET_Z[facing] * 0.5);
+    }
+
+    private static float mouseStep() {
+        float f = mc.gameSettings.mouseSensitivity * 0.6F + 0.2F;
+        return f * f * f * 8.0F * 0.15F;
+    }
+
+    // Rise's applySensitivityPatch: whole mouse counts away from the last look sent.
+    private static Look sensitivityPatch(Look target, Look last) {
+        float gcd = mouseStep();
+        if (!(gcd > 0.0F)) return target;
+
+        float yaw = last.yaw + Math.round(angleDifference(target.yaw, last.yaw) / gcd) * gcd;
+        float pitch = last.pitch + Math.round((target.pitch - last.pitch) / gcd) * gcd;
+        return new Look(yaw, MathHelper.clamp_float(pitch, -90.0F, 90.0F));
+    }
+
+    // MoveUtil.direction in degrees: the way the keys walk you.
+    private static float moveDirection(float yaw, float forward, float strafe) {
+        float direction = yaw;
+        if (forward < 0.0F) direction += 180.0F;
+
+        float scale = forward < 0.0F ? -0.5F : (forward > 0.0F ? 0.5F : 1.0F);
+        if (strafe > 0.0F) direction -= 90.0F * scale;
+        else if (strafe < 0.0F) direction += 90.0F * scale;
+
+        return direction;
+    }
+
+    // -- the world ---------------------------------------------------------------
+
+    private Block blockAt(int x, int y, int z) {
+        return mc.theWorld.getBlockState(new BlockPos(x, y, z)).getBlock();
+    }
+
+    private boolean replaceable(int x, int y, int z) {
+        Block block = blockAt(x, y, z);
+        return block == null || block.isReplaceable(mc.theWorld, new BlockPos(x, y, z));
+    }
+
+    private boolean air(int x, int y, int z) {
+        Block block = blockAt(x, y, z);
+        return block == null || block.getMaterial() == Material.air;
+    }
+
+    private boolean interactable(int x, int y, int z) {
+        Block block = blockAt(x, y, z);
+        return block instanceof BlockContainer || block instanceof BlockWorkbench || block instanceof BlockAnvil
+                || block instanceof BlockBed || block instanceof BlockDoor || block instanceof BlockTrapDoor
+                || block instanceof BlockFenceGate || block instanceof BlockFence || block instanceof BlockButton
+                || block instanceof BlockLever;
+    }
+
+    private boolean solid(int x, int y, int z) {
+        return !replaceable(x, y, z) && !interactable(x, y, z);
+    }
+
+    // What a look at this rotation from the eyes hits within reach.
+    private Hit trace(Vec3 eye, Look look) {
+        Vec3 dir = WorldUtil.getVectorForRotation(look.pitch, look.yaw);
+        Hit out = new Hit();
+        out.raw = mc.theWorld.rayTraceBlocks(eye, eye.addVector(dir.xCoord * REACH, dir.yCoord * REACH, dir.zCoord * REACH));
+
+        if (out.raw != null && out.raw.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK && out.raw.getBlockPos() != null) {
+            BlockPos at = out.raw.getBlockPos();
+            out.x = at.getX();
+            out.y = at.getY();
+            out.z = at.getZ();
+            out.side = out.raw.sideHit.getIndex();
+            out.block = true;
+        }
+
+        return out;
+    }
+
+    // RayCastUtil (strict): the look is on the face to click.
+    private static boolean overBlock(Hit ray, Placement p) {
+        return ray.block && ray.x == p.fx && ray.y == p.fy && ray.z == p.fz && ray.side == p.facing;
+    }
+
+    // Lands on the face from the eyes -- and, given nextEye, from there too.
+    private boolean lands(Vec3 eye, Vec3 nextEye, Look look, Placement p) {
+        return overBlock(trace(eye, look), p) && (nextEye == null || overBlock(trace(nextEye, look), p));
+    }
+
+    // -- choosing the block ------------------------------------------------------
+
+    private static final int[][] SIDES = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 } };
+
+    // Offsets nearest-first from the block under your feet: 3 out, and only the
+    // three layers under your feet, so it never wanders off the gap you cross.
+    private static final List<int[]> ORDER = buildOrder();
+
+    private static List<int[]> buildOrder() {
+        List<int[]> out = new ArrayList<int[]>();
+
+        for (int dx = -3; dx <= 3; ++dx) {
+            for (int dy = -3; dy <= -1; ++dy) {
+                for (int dz = -3; dz <= 3; ++dz) {
+                    out.add(new int[] { dx, dy, dz, dx * dx + (dy + 1) * (dy + 1) + dz * dz });
+                }
+            }
+        }
+
+        // Nearest first; on a tie, the layer under your feet. (Collections.sort is stable.)
+        Collections.sort(out, new Comparator<int[]>() {
+            @Override
+            public int compare(int[] a, int[] b) {
+                if (a[3] != b[3]) return Integer.compare(a[3], b[3]);
+                return Boolean.compare(b[1] == -1, a[1] == -1);
+            }
+        });
+
+        return out;
+    }
+
+    // PlayerUtil.getPlacePossibility: the open block beside a solid one, nearest
+    // the block under your feet.
+    private int[] placePossibility(double x, double y, double z, Integer layerY) {
+        int px = floor(x), py = floor(y), pz = floor(z);
+
+        for (int[] o : ORDER) {
+            int bx = px + o[0], by = py + o[1], bz = pz + o[2];
+
+            if ((layerY != null && by != layerY) || !replaceable(bx, by, bz)) continue;
+
+            for (int[] side : SIDES) {
+                if (solid(bx + side[0], by + side[1], bz + side[2])) {
+                    return new int[] { bx, by, bz };
+                }
+            }
+        }
+
+        return null;
+    }
+
+    // PlayerUtil.getEnumFacing: a solid neighbour beside the target, the one
+    // nearest the way you're looking first; else the one below.
+    private Placement enumFacing(int[] t, final float lookYaw) {
+        // { offset x, offset z, facing }
+        int[][] horizontal = { { 0, -1, 3 }, { 0, 1, 2 }, { -1, 0, 5 }, { 1, 0, 4 } };
+        List<int[]> found = new ArrayList<int[]>();
+
+        for (int[] o : horizontal) {
+            if (solid(t[0] + o[0], t[1], t[2] + o[1])) found.add(o);
+        }
+
+        if (!found.isEmpty()) {
+            Collections.sort(found, new Comparator<int[]>() {
+                @Override
+                public int compare(int[] a, int[] b) {
+                    return Float.compare(off(a), off(b));
+                }
+
+                private float off(int[] o) {
+                    float direction = (float) Math.toDegrees(Math.atan2(o[1], o[0]));
+                    return Math.abs(angleDifference(direction, lookYaw + 90.0F));
+                }
+            });
+
+            int[] o = found.get(0);
+            return new Placement(t[0], t[1], t[2], t[0] + o[0], t[1], t[2] + o[1], o[2]);
+        }
+
+        if (solid(t[0], t[1] - 1, t[2])) {
+            return new Placement(t[0], t[1], t[2], t[0], t[1] - 1, t[2], FACING_UP);
+        }
+
+        return null;
+    }
+
+    // The insets the Edge aim tries, far edge first: the furthest point whose
+    // snapped look still lands is the aim. The last is the middle, Rise's own
+    // fallback, so there is always one more thing to try before giving up.
+    private static final double[] EDGE_INSETS = { 0.34, 0.26, 0.18, 0.10, 0.0 };
+
+    // LiquidBounce's EdgePoint: the point on the clicked face furthest from your
+    // feet, at inset out from the middle (0 the middle, 0.5 the very edge). Your
+    // feet fix which corner is furthest; inset only says how far out to aim.
+    private static Vec3 edgePoint(Placement p, double fx, double fy, double fz, double inset) {
+        Vec3 c = faceCenter(p.fx, p.fy, p.fz, p.facing);
+        int sx = OFFSET_X[p.facing] == 0 ? 1 : 0, sy = OFFSET_Y[p.facing] == 0 ? 1 : 0, sz = OFFSET_Z[p.facing] == 0 ? 1 : 0;
+        double dirX = sx != 0 ? (c.xCoord - fx >= 0.0 ? 1.0 : -1.0) : 0.0;
+        double dirY = sy != 0 ? (c.yCoord - fy >= 0.0 ? 1.0 : -1.0) : 0.0;
+        double dirZ = sz != 0 ? (c.zCoord - fz >= 0.0 ? 1.0 : -1.0) : 0.0;
+
+        return new Vec3(c.xCoord + dirX * inset, c.yCoord + dirY * inset, c.zCoord + dirZ * inset);
+    }
+
+    private static FaceSpan spanOf(Vec3 eye, Placement p) {
+        Vec3 c = faceCenter(p.fx, p.fy, p.fz, p.facing);
+        int sx = OFFSET_X[p.facing] == 0 ? 1 : 0, sy = OFFSET_Y[p.facing] == 0 ? 1 : 0, sz = OFFSET_Z[p.facing] == 0 ? 1 : 0;
+
+        FaceSpan span = new FaceSpan();
+        span.center = rotationTo(eye, c.xCoord, c.yCoord, c.zCoord);
+
+        for (int a = -2; a <= 2; ++a) {
+            for (int b = -2; b <= 2; ++b) {
+                for (int d = -2; d <= 2; ++d) {
+                    Look r = rotationTo(eye, c.xCoord + a * sx * 0.25, c.yCoord + b * sy * 0.25, c.zCoord + d * sz * 0.25);
+                    float dYaw = angleDifference(r.yaw, span.center.yaw);
+
+                    span.yawLo = Math.min(span.yawLo, dYaw);
+                    span.yawHi = Math.max(span.yawHi, dYaw);
+                    span.pitchLo = Math.min(span.pitchLo, r.pitch);
+                    span.pitchHi = Math.max(span.pitchHi, r.pitch);
+                }
+            }
+        }
+
+        span.anyYaw = span.yawHi - span.yawLo > 170.0F;
+        return span;
+    }
+
+    private static final int[] YAW_OFFSETS = buildYawOffsets();
+
+    private static int[] buildYawOffsets() {
+        List<Integer> out = new ArrayList<Integer>();
+        out.add(0);
+
+        for (int d = 1; d <= 180; d += d < 20 ? 1 : 2) {
+            out.add(-d);
+            out.add(d);
+        }
+
+        int[] array = new int[out.size()];
+        for (int i = 0; i < array.length; ++i) array[i] = out.get(i);
+        return array;
+    }
+
+    // Hypixel Mode's Raycast aim, the shape of Raycast2 / Watchdog3: only
+    // whole-degree looks, the yaw stepping out from base -- a degree at a time
+    // to 20, then two -- and at each yaw the pitch stepping out from reference.
+    // The first that, put on the mouse grid from last, still lands on the face
+    // is the aim. Only the yaws and pitches in the face's span are traced.
+    private Look presetAim(Vec3 eye, Vec3 nextEye, Placement p, float base, float reference, Look last) {
+        FaceSpan span = spanOf(eye, p);
+
+        List<Integer> pitches = new ArrayList<Integer>();
+        int ref = Math.round(MathHelper.clamp_float(reference, -90.0F, 90.0F));
+
+        for (int k = 0; k <= 180; ++k) {
+            if (ref - k >= -90 && span.reachesPitch(ref - k)) pitches.add(ref - k);
+            if (k > 0 && ref + k <= 90 && span.reachesPitch(ref + k)) pitches.add(ref + k);
+        }
+
+        float baseYaw = Math.round(base);
+        int budget = 400;   // traces, so a face nothing reaches can't stall the tick
+
+        for (int offset : YAW_OFFSETS) {
+            float yaw = baseYaw + offset;
+            if (!span.reachesYaw(yaw)) continue;
+
+            for (int pitch : pitches) {
+                if (--budget < 0) return null;
+
+                Look look = sensitivityPatch(new Look(yaw, pitch), last);
+                if (lands(eye, nextEye, look, p)) return look;
+            }
+        }
+
+        return null;
+    }
+
+    // -- inventory ---------------------------------------------------------------
+
+    private static boolean bridgeBlock(ItemStack stack) {
+        return stack != null && stack.stackSize > 0 && InventoryUtil.isValidBlock(stack.getItem());
+    }
+
+    // The last hotbar slot with bridging blocks, or the current one if none.
+    private static int blockSlot() {
+        int slot = mc.thePlayer.inventory.currentItem;
+
+        for (int i = 0; i < 9; ++i) {
+            if (bridgeBlock(mc.thePlayer.inventory.getStackInSlot(i))) slot = i;
+        }
+
+        return slot;
+    }
+
+    private static boolean haveBlocks() {
+        for (int i = 0; i < 9; ++i) {
+            if (bridgeBlock(mc.thePlayer.inventory.getStackInSlot(i))) return true;
+        }
+
+        return false;
+    }
+
+    // -- keys --------------------------------------------------------------------
+
+    private static void press(KeyBinding key, boolean pressed) {
+        KeyBinding.setKeyBindState(key.getKeyCode(), pressed);
+    }
+
+    private static boolean physical(KeyBinding key) {
+        return GameSettings.isKeyDown(key);
+    }
+
+    // -- the look ----------------------------------------------------------------
+
+    private static Look serverLook() {
+        return RotationUtil.silentActive
+                ? new Look(RotationUtil.serverYaw, RotationUtil.serverPitch)
+                : new Look(mc.thePlayer.rotationYaw, mc.thePlayer.rotationPitch);
+    }
+
+    // Sent as is: it's on the mouse grid already.
+    private static void sendLook(Look look) {
+        Look before = serverLook();
+        RotationUtil.prevServerYaw = before.yaw;
+        RotationUtil.prevServerPitch = before.pitch;
+        RotationUtil.serverYaw = look.yaw;
+        RotationUtil.serverPitch = look.pitch;
+        RotationUtil.silentActive = true;
+    }
+
+    // -- lifecycle ---------------------------------------------------------------
+
+    @Override
+    public void onEnable() {
+        if (mc.thePlayer == null) return;
+
+        world = mc.theWorld;
+        oldSlot = mc.thePlayer.inventory.currentItem;
+        targetYaw = mc.thePlayer.rotationYaw - 180.0F;
+        targetPitch = 90.0F;
+        ticksOnAir = 0;
+        offGroundTicks = 0;
+        onGroundTicks = 0;
+        startY = Math.floor(mc.thePlayer.posY);
+
+        easing = false;
+        easeTick = 0;
+        turnHeightWobble = turnHeight.getValueFloat();
+        lastTickWobble = lastTick.getValueInt();
+        jumpY = mc.thePlayer.posY;
+        turnedBack = false;
+        backYawOffset = 0.0F;
+        jumpDelayTicks = 0;
+        sneakTicks = 0;
+    }
+
+    @Override
+    public void onDisable() {
+        if (mc.thePlayer != null) {
+            if (switchBack.isEnabled() && oldSlot >= 0 && mc.thePlayer.inventory.currentItem != oldSlot) {
+                mc.thePlayer.inventory.currentItem = oldSlot;   // the controller syncs it next tick
+            }
+
+            if (holdingSprint) press(mc.gameSettings.keyBindSprint, physical(mc.gameSettings.keyBindSprint));
+            if (pressingJump) press(mc.gameSettings.keyBindJump, physical(mc.gameSettings.keyBindJump));
+            if (pressingSneak) press(mc.gameSettings.keyBindSneak, physical(mc.gameSettings.keyBindSneak));
+        }
+
+        RotationUtil.resetSilentRotation();
+
+        pressingJump = false;
+        pressingSneak = false;
+        sneakTicks = 0;
+        holdingSprint = false;
+        oldSlot = -1;
+        easing = false;
+        easeTick = 0;
+        world = null;
+    }
+
+    @Override
+    public void onUpdate() {
+        if (mc.thePlayer == null || mc.theWorld == null || mc.playerController == null) return;
+
+        // A new world: off, as the C++ client does on a world load.
+        if (world != null && world != mc.theWorld) {
+            setToggled(false);
+            return;
+        }
+        world = mc.theWorld;
+
+        final int modeIndex = mode.getIndex();
+        final double posX = mc.thePlayer.posX, posY = mc.thePlayer.posY, posZ = mc.thePlayer.posZ;
+        final boolean onGround = mc.thePlayer.onGround;
+        final GameSettings settings = mc.gameSettings;
+
+        // The keys as you hold them (the move fix rewrites the player's own input).
+        final float forward = (settings.keyBindForward.isKeyDown() ? 1.0F : 0.0F) - (settings.keyBindBack.isKeyDown() ? 1.0F : 0.0F);
+        final float strafe = (settings.keyBindLeft.isKeyDown() ? 1.0F : 0.0F) - (settings.keyBindRight.isKeyDown() ? 1.0F : 0.0F);
+        final boolean isMoving = forward != 0.0F || strafe != 0.0F;
+        final boolean jumpKey = physical(settings.keyBindJump);
+        final float playerYaw = mc.thePlayer.rotationYaw;
+
+        offGroundTicks = onGround ? 0 : offGroundTicks + 1;
+        onGroundTicks = onGround ? onGroundTicks + 1 : 0;
+
+        // One cadence per landing: the turn ticks wander a little and the next
+        // jump waits a random few ground ticks, so the rhythm never repeats.
+        if (onGround && onGroundTicks == 1) {
+            boolean wobble = modeIndex == TELLY && randomizeTicks.isEnabled();
+
+            turnHeightWobble = turnHeight.getValueFloat() + (wobble ? (float) (random.nextDouble() * 0.1) : 0.0F);
+            lastTickWobble = lastTick.getValueInt() + (wobble ? (int) (random.nextDouble() * 3.0) : 0);
+            backYawOffset = (float) (random.nextDouble() - 0.5) * 2.0F * lookJitter.getValueFloat();
+            jumpDelayTicks = jumpDelay.getValueInt() > 0 ? (int) (random.nextDouble() * (jumpDelay.getValueInt() + 1.0)) : 0;
+        }
+
+        // Telly turns back once the jump has lifted you Turn Height above where
+        // it left the ground (or it's well into the jump), until you land.
+        if (onGround) {
+            jumpY = posY;
+            turnedBack = false;
+        } else if (posY - jumpY >= turnHeightWobble || offGroundTicks >= 6) {
+            turnedBack = true;
+        }
+
+        // Telly: jump off the ground whenever you walk forward, as long as there
+        // are blocks to bridge with.
+        {
+            boolean want = modeIndex == TELLY && autoJump.isEnabled()
+                    && onGround && onGroundTicks > jumpDelayTicks && forward > 0.0F && haveBlocks();
+
+            if (want || pressingJump) press(settings.keyBindJump, want || jumpKey);
+            pressingJump = want;
+        }
+
+        // Sprint off: hold the sprint key up and drop the sprint before the
+        // player's update. Telly is a sprint-jump, so it always sprints.
+        if (holdsSprint()) {
+            press(settings.keyBindSprint, false);
+            mc.thePlayer.setSprinting(false);
+            holdingSprint = true;
+        } else if (holdingSprint) {
+            press(settings.keyBindSprint, physical(settings.keyBindSprint));
+            holdingSprint = false;
+        }
+
+        // Block Count: what the hotbar has left to bridge with.
+        {
+            int count = 0;
+            for (int i = 0; i < 9; ++i) {
+                ItemStack stack = mc.thePlayer.inventory.getStackInSlot(i);
+                if (bridgeBlock(stack)) count += stack.stackSize;
+            }
+            blocksLeft = count;
+        }
+
+        // Sneak (Normal, Snap): on the ground over an open block -- an edge --
+        // sneak, and keep sneaking Sneak Delay ticks after it is filled.
+        {
+            boolean use = sneak.isEnabled() && modeIndex != TELLY && !jumpKey && haveBlocks();
+
+            if (use && onGround && replaceable(floor(posX), floor(posY) - 1, floor(posZ))) {
+                sneakTicks = sneakDelay.getValueInt() + 1;
+            } else if (sneakTicks > 0) {
+                --sneakTicks;
+            }
+
+            boolean want = use && sneakTicks > 0;
+            if (want || pressingSneak) press(settings.keyBindSneak, want || physical(settings.keyBindSneak));
+            pressingSneak = want;
+        }
+
+        // SlotComponent.setSlot(SlotUtil.findBlock()); the controller syncs it.
+        int slot = blockSlot();
+        if (slot != mc.thePlayer.inventory.currentItem) {
+            mc.thePlayer.inventory.currentItem = slot;
+        }
+
+        if (!bridgeBlock(mc.thePlayer.inventory.getStackInSlot(slot))) return;
+
+        // Same Y: build on the layer you started from while you're in the air
+        // without holding jump (Telly's jumps, or a speed's hops).
+        final boolean keepY = sameY.isEnabled() && !jumpKey && isMoving;
+        final int belowY = floor(posY) - 1;
+        final int startLayer = (int) startY - 1;
+
+        if (jumpKey && !isMoving) {
+            ticksOnAir = replaceable(floor(posX), belowY, floor(posZ)) ? ticksOnAir + 1 : 0;
+        } else {
+            boolean open = keepY ? replaceable(floor(posX), startLayer, floor(posZ)) : replaceable(floor(posX), belowY, floor(posZ));
+            ticksOnAir = open ? ticksOnAir + 1 : 0;
+        }
+
+        boolean readyToPlace = ticksOnAir >= Math.max(1, placeDelay.getValueInt());
+
+        final Look server = serverLook();
+        final int[] target = placePossibility(posX, posY, posZ, keepY ? Integer.valueOf(startLayer) : null);
+        final Placement place = target != null ? enumFacing(target, server.yaw) : null;
+
+        final double eyeHeight = mc.thePlayer.getEyeHeight();
+        final Vec3 eye = new Vec3(posX, posY + eyeHeight, posZ);
+
+        // Predict Eye: where this tick's move takes the eyes, so a place only
+        // goes out if it lands from both -- whichever the server checks it from.
+        final Vec3 nextEye = predictEye.isEnabled()
+                ? new Vec3(posX + mc.thePlayer.motionX, posY + eyeHeight + (onGround ? 0.0 : mc.thePlayer.motionY), posZ + mc.thePlayer.motionZ)
+                : null;
+
+        // The last look sent, next to your own yaw so it never jumps by whole turns.
+        final float lastYaw = playerYaw + angleDifference(server.yaw, playerYaw);
+        final Look last = new Look(lastYaw, server.pitch);
+
+        final boolean hypixelOn = modeIndex != NORMAL && hypixel.isEnabled();
+        final boolean raycastAim = hypixelOn && hypixelAim.is("Raycast");
+        final float sideYaw = moveDirection(playerYaw, forward, strafe) + 90.0F;
+
+        boolean aimedThisTick = false;   // the aim was put on the face this tick
+        boolean onFace = false;          // the look the server has is on the face
+        boolean forwardLook = false;     // Telly looks ahead this tick, not at the face
+
+        if (place != null) {
+            onFace = lands(eye, nextEye, server, place);
+
+            switch (modeIndex) {
+                case NORMAL:
+                    if (readyToPlace && !onFace) {
+                        aimedThisTick = reaim(place, eye, nextEye, last, server, raycastAim, hypixelOn, isMoving,
+                                posX, posY, posZ, playerYaw, forward, strafe, sideYaw, true);
+                    }
+                    break;
+
+                case SNAP:
+                    aimedThisTick = reaim(place, eye, nextEye, last, server, raycastAim, hypixelOn, isMoving,
+                            posX, posY, posZ, playerYaw, forward, strafe, sideYaw, true);
+
+                    if (ticksOnAir <= 0 || onFace) {
+                        targetYaw = moveDirection(playerYaw, forward, strafe);
+                    }
+                    break;
+
+                case TELLY:
+                    // Forward on the ground and until the jump is high enough, and
+                    // again late in it -- unless a gap is still open under you,
+                    // which the last block of a jump has to fill first.
+                    if (!turnedBack || (offGroundTicks > lastTickWobble && ticksOnAir <= 0)) {
+                        forwardLook = true;
+                        targetYaw = playerYaw;
+                        targetPitch = forwardPitch.getValueFloat();
+                    } else if (!onFace) {
+                        aimedThisTick = aimBack(place, eye, nextEye, last, server, raycastAim, hypixelOn, isMoving,
+                                posX, posY, posZ, playerYaw, forward, strafe, sideYaw);
+                    }
+
+                    if (!turnedBack) readyToPlace = false;
+                    break;
+
+                default:
+                    break;
+            }
+        } else if (modeIndex != NORMAL) {
+            targetYaw = modeIndex == SNAP ? moveDirection(playerYaw, forward, strafe) : playerYaw;
+
+            if (modeIndex == TELLY) {
+                forwardLook = true;
+                targetPitch = forwardPitch.getValueFloat();
+            }
+        }
+
+        // Watchdog Tower (Cryptix's): holding jump on the ground -- towering in
+        // place or jump-bridging -- nothing is placed and the yaw faces the way
+        // you walk, while the pitch keeps going to the block; the place comes
+        // once the jump has you off the ground.
+        if (tower.isEnabled() && jumpKey && onGround) {
+            readyToPlace = false;
+            targetYaw = moveDirection(playerYaw, forward, strafe);
+            aimedThisTick = true;
+        }
+
+        // The look sent this tick: next to your own yaw, on the mouse grid.
+        targetYaw = playerYaw + angleDifference(targetYaw, playerYaw);
+        targetPitch = MathHelper.clamp_float(targetPitch, -90.0F, 90.0F);
+
+        // Snap: walk the look onto the goal along a sigmoid. A new goal far from
+        // the one in progress starts the curve again from the server's look.
+        if (modeIndex == SNAP) {
+            boolean restart = !easing || easeTick >= easeLength
+                    || Math.abs(angleDifference(targetYaw, easeGoalYaw)) > 10.0F
+                    || Math.abs(targetPitch - easeGoalPitch) > 10.0F;
+
+            if (restart) {
+                easing = true;
+                easeTick = 0;
+                easeLength = Math.max(1, easeTicks.getValueInt());
+                easeFromYaw = lastYaw;
+                easeFromPitch = server.pitch;
+                easeGoalYaw = targetYaw;
+                easeGoalPitch = targetPitch;
+            }
+
+            double t = MathHelper.clamp_double((easeTick + 1) / (double) easeLength, 0.0, 1.0);
+            float e = (float) sigmoidEase(t, steepness.getValue());
+
+            targetYaw = easeFromYaw + angleDifference(easeGoalYaw, easeFromYaw) * e;
+            targetPitch = MathHelper.clamp_float(easeFromPitch + (easeGoalPitch - easeFromPitch) * e, -90.0F, 90.0F);
+
+            ++easeTick;
+        }
+
+        // Normal: a re-aim moves at the turn speed. Telly: the turn back goes
+        // round the same shoulder and the turn forward unwinds the same arc,
+        // eased; once back, the yaw holds and the pitch creeps down while the
+        // face still takes it. Every turn, late in the jump too, stays at the
+        // turn speed: a late turn back misses its last block rather than snapping.
+        final float speedSetting = turnSpeed.getValueFloat();
+
+        if (speedSetting > 0.0F && modeIndex == NORMAL) {
+            if (aimedThisTick) {
+                targetYaw = server.yaw + MathHelper.clamp_float(angleDifference(targetYaw, server.yaw), -speedSetting, speedSetting);
+                targetPitch = MathHelper.clamp_float(server.pitch + MathHelper.clamp_float(targetPitch - server.pitch, -speedSetting, speedSetting), -90.0F, 90.0F);
+            }
+        } else if (speedSetting > 0.0F && modeIndex == TELLY) {
+            // Under half a turn a tick, so the patch can't take the short way round.
+            final float speed = Math.min(speedSetting, 170.0F);
+            final float side = turnSide.getIndex() == 0 ? 1.0F : -1.0F;   // yaw grows turning right
+
+            if (forwardLook) {
+                float jitter = lookJitter.getValueFloat();
+                float goalYaw = playerYaw + (float) (random.nextDouble() - 0.5) * 2.0F * jitter;
+                float goalPitch = MathHelper.clamp_float(forwardPitch.getValueFloat() + (float) (random.nextDouble() - 0.5) * 2.0F * jitter, -90.0F, 90.0F);
+
+                targetYaw = server.yaw + ease(toward(goalYaw, -side, server.yaw), speed);
+                targetPitch = MathHelper.clamp_float(server.pitch + ease(goalPitch - server.pitch, speed), -90.0F, 90.0F);
+            } else {
+                targetYaw = server.yaw + ease(toward(onFace ? server.yaw : targetYaw, side, server.yaw), speed);
+
+                if (onFace && place != null) {
+                    // Already on the face: drift down while it still is.
+                    float lower = Math.min(90.0F, server.pitch + (float) (0.3 + random.nextDouble() * 0.9));
+                    targetPitch = overBlock(trace(eye, new Look(targetYaw, lower)), place) ? lower : server.pitch;
+                } else {
+                    targetPitch = MathHelper.clamp_float(server.pitch + ease(targetPitch - server.pitch, speed), -90.0F, 90.0F);
+                }
+            }
+        }
+
+        Look sent = sensitivityPatch(new Look(targetYaw, targetPitch), last);
+
+        // A turn at the turn speed is the same turn tick after tick; Grim flags a
+        // place made with a turn that repeats the last one (DuplicateRotPlace).
+        // One mouse step off breaks the repeat and can't leave the face.
+        {
+            float gcd = mouseStep();
+            float turnYaw = angleDifference(sent.yaw, lastYaw);
+            float turnPitch = sent.pitch - server.pitch;
+            boolean turning = Math.abs(turnYaw) > 1e-4F || Math.abs(turnPitch) > 1e-4F;
+
+            if (gcd > 0.0F && turning && (same(turnYaw, turnPitch, prevTurnYaw, prevTurnPitch) || same(turnYaw, turnPitch, placeTurnYaw, placeTurnPitch))) {
+                // On the pitch, towards the target, when there is room; else the yaw.
+                float pitchStep = targetPitch >= sent.pitch ? gcd : -gcd;
+
+                if (sent.pitch + pitchStep >= -90.0F && sent.pitch + pitchStep <= 90.0F) {
+                    sent = new Look(sent.yaw, sent.pitch + pitchStep);
+                } else {
+                    sent = new Look(sent.yaw + (turnYaw >= 0.0F ? -gcd : gcd), sent.pitch);
+                }
+            }
+
+            prevTurnYaw = angleDifference(sent.yaw, lastYaw);
+            prevTurnPitch = sent.pitch - server.pitch;
+        }
+
+        sendLook(sent);
+
+        // Strict ray cast with the look that goes out this tick: right-click only
+        // when it is on the face (from next tick's eyes too, with Predict Eye).
+        if (place != null && readyToPlace) {
+            Hit ray = trace(eye, sent);
+
+            if (overBlock(ray, place) && (nextEye == null || overBlock(trace(nextEye, sent), place))
+                    && mc.playerController.onPlayerRightClick(mc.thePlayer, mc.theWorld, mc.thePlayer.getHeldItem(),
+                    ray.raw.getBlockPos(), ray.raw.sideHit, ray.raw.hitVec)) {
+                if (swing.isEnabled()) mc.thePlayer.swingItem();
+
+                placeTurnYaw = prevTurnYaw;
+                placeTurnPitch = prevTurnPitch;
+                ticksOnAir = 0;
+            }
+        }
+
+        // Same Y bookkeeping, as Rise does it after each placement attempt.
+        if (place != null) {
+            if (jumpKey && posY % 1.0 > 0.5) startY = Math.floor(posY);
+            if ((posY < startY || onGround) && !isMoving) startY = Math.floor(posY);
+            if (onGroundTicks > 2 && Math.floor(posY) != startY && !air(floor(posX), floor(posY) - 1, floor(posZ))) {
+                startY = Math.floor(posY);
+            }
+        }
+
+        // Fallen below the layer: it's above you now, so build where you are.
+        if (posY < startY) startY = Math.floor(posY);
+    }
+
+    private static boolean same(float a, float b, float c, float d) {
+        return Math.abs(a - c) < 1e-4F && Math.abs(b - d) < 1e-4F;
+    }
+
+    // Degrees from the server's yaw to the goal, the long way round when the
+    // short way would turn against dir; small corrections go either way.
+    private static float toward(float goal, float dir, float serverYaw) {
+        float delta = angleDifference(goal, serverYaw);
+        if (delta * dir < 0.0F && Math.abs(delta) > 60.0F) delta += 360.0F * dir;
+        return delta;
+    }
+
+    // Most of the way there each tick, never more than speed, never less than a
+    // couple of degrees unless that's all that's left.
+    private float ease(float delta, float speed) {
+        float step = Math.min(speed, Math.max(Math.abs(delta) * (float) (0.55 + random.nextDouble() * 0.2), Math.min(Math.abs(delta), 2.0F)));
+        return Math.copySign(step, delta);
+    }
+
+    // Rise's getRotations(0): from the middle of the target block, look out level
+    // in eight directions; the points those land on the clicked face, aimed at
+    // from your eyes, are the choices, and the one nearest the current look
+    // wins. Else the middle of the face, if the aim is off it. Hypixel Mode
+    // tries its own aim first. Returns whether the aim was put on the face.
+    private boolean reaim(Placement p, Vec3 eye, Vec3 nextEye, Look last, Look server, boolean raycastAim, boolean hypixelOn,
+                          boolean isMoving, double posX, double posY, double posZ, float playerYaw, float forward, float strafe,
+                          float sideYaw, boolean tryRaycast) {
+        // Raycast: a preset look that lands on the face.
+        if (raycastAim && tryRaycast) {
+            float base = raycastBase.is("Side") ? sideYaw : moveDirection(playerYaw, forward, strafe) - 180.0F;
+            Look aim = presetAim(eye, nextEye, p, base, server.pitch, last);
+
+            if (aim != null) {
+                targetYaw = aim.yaw;
+                targetPitch = aim.pitch;
+                return true;
+            }
+        }
+
+        // Edge: while you walk, aim out toward the far edge of the face. The
+        // point is checked AFTER the mouse-grid snap that is actually sent, and
+        // from next tick's eyes too, so the committed look is one that still
+        // lands -- not the raw far corner the snap pushes off the face, which
+        // made this fall off. From the edge inward, the furthest that holds wins.
+        if (hypixelOn && !raycastAim && isMoving) {
+            for (double inset : EDGE_INSETS) {
+                Vec3 e = edgePoint(p, posX, posY, posZ, inset);
+                Look aim = sensitivityPatch(rotationTo(eye, e.xCoord, e.yCoord, e.zCoord), last);
+
+                if (lands(eye, nextEye, aim, p)) {
+                    targetYaw = aim.yaw;
+                    targetPitch = aim.pitch;
+                    return true;
+                }
+            }
+        }
+
+        double lowered = posY + (p.ty - floor(posY)) + 0.5 - (random.nextDouble() - 0.5) * aimRandomness.getValue();
+        Vec3 from = new Vec3(posX, lowered, posZ);
+
+        float wrapped = MathHelper.wrapAngleTo180_float(playerYaw);
+        boolean nearAxis = Math.abs(wrapped % 90.0F) <= 10.0F || Math.abs(wrapped % 90.0F) >= 80.0F;
+
+        Look best = null;
+        float bestDistance = 0.0F;
+
+        for (int offset = nearAxis ? -135 : -180; offset <= (nearAxis ? 135 : 180); offset += 45) {
+            Hit ray = trace(from, new Look(playerYaw + offset * 3.0F, 0.0F));
+            if (!ray.block || ray.raw == null || ray.raw.hitVec == null) continue;
+
+            Vec3 at = ray.raw.hitVec;
+            Look aim = rotationTo(eye, at.xCoord, at.yCoord, at.zCoord);
+            if (!overBlock(trace(eye, aim), p)) continue;
+
+            float dYaw = angleDifference(aim.yaw, server.yaw), dPitch = aim.pitch - server.pitch;
+            float distance = dYaw * dYaw + dPitch * dPitch;
+
+            if (best == null || distance < bestDistance) {
+                best = aim;
+                bestDistance = distance;
+            }
+        }
+
+        if (best != null) {
+            targetYaw = best.yaw;
+            targetPitch = best.pitch;
+            return true;
+        }
+
+        if (!overBlock(trace(eye, new Look(targetYaw, targetPitch)), p)) {
+            Vec3 c = faceCenter(p.fx, p.fy, p.fz, p.facing);
+            Look aim = rotationTo(eye, c.xCoord, c.yCoord, c.zCoord);
+            targetYaw = aim.yaw;
+            targetPitch = aim.pitch;
+            return true;
+        }
+
+        return false;
+    }
+
+    // Telly's look back: the yaw held straight behind you (give or take the jump's
+    // small offset) and only the pitch searched, from the one that lands nearest
+    // the current look (or, in Hypixel Edge, the far edge's). A pitch whose
+    // neighbours land too is preferred, so the mouse grid can't round it off the
+    // face. Only the pitches in the face's span are traced; a yaw outside it, or
+    // nothing at that yaw: reaim, yaw and all. Raycast uses its own search.
+    private boolean aimBack(Placement p, Vec3 eye, Vec3 nextEye, Look last, Look server, boolean raycastAim, boolean hypixelOn,
+                            boolean isMoving, double posX, double posY, double posZ, float playerYaw, float forward, float strafe,
+                            float sideYaw) {
+        float backYaw = playerYaw + 180.0F + backYawOffset;
+
+        if (raycastAim) {
+            Look aim = presetAim(eye, nextEye, p, raycastBase.is("Side") ? sideYaw : backYaw, server.pitch, last);
+
+            if (aim != null) {
+                targetYaw = aim.yaw;
+                targetPitch = aim.pitch;
+                return true;
+            }
+
+            return reaim(p, eye, nextEye, last, server, true, hypixelOn, isMoving, posX, posY, posZ, playerYaw, forward, strafe, sideYaw, false);
+        }
+
+        float reference = server.pitch;
+
+        if (hypixelOn && isMoving) {
+            // A moderate reach out, not the extreme edge, so the preferred pitch
+            // sits where the back-yaw scan can actually hold it.
+            Vec3 e = edgePoint(p, posX, posY, posZ, 0.26);
+            reference = rotationTo(eye, e.xCoord, e.yCoord, e.zCoord).pitch;
+        }
+
+        FaceSpan span = spanOf(eye, p);
+
+        if (!span.reachesYaw(backYaw)) {
+            return reaim(p, eye, nextEye, last, server, false, hypixelOn, isMoving, posX, posY, posZ, playerYaw, forward, strafe, sideYaw, false);
+        }
+
+        boolean[] hits = new boolean[71];
+
+        for (int i = 0; i < 71; ++i) {
+            hits[i] = span.reachesPitch(20.0F + i) && overBlock(trace(eye, new Look(backYaw, 20.0F + i)), p);
+        }
+
+        Float best = null;
+        boolean bestInner = false;
+
+        for (int i = 0; i < 71; ++i) {
+            if (!hits[i]) continue;
+
+            float pitch = 20.0F + i;
+            boolean inner = i > 0 && i < 70 && hits[i - 1] && hits[i + 1];
+
+            if (best == null || (inner && !bestInner) || (inner == bestInner && Math.abs(pitch - reference) < Math.abs(best - reference))) {
+                best = pitch;
+                bestInner = inner;
+            }
+        }
+
+        if (best == null) {
+            return reaim(p, eye, nextEye, last, server, false, hypixelOn, isMoving, posX, posY, posZ, playerYaw, forward, strafe, sideYaw, false);
+        }
+
+        targetYaw = backYaw;
+        targetPitch = best;
+        return true;
+    }
+
+    @Override
+    public void onRender2D() {
+        if (!blockCount.isEnabled() || mc.thePlayer == null || mc.fontRendererObj == null) return;
+
+        // Under the crosshair: red when nearly out, orange, yellow, then white.
+        int count = blocksLeft;
+        int colour = count <= 10 ? 0xFFFF5555 : count <= 20 ? 0xFFFFAA00 : count <= 30 ? 0xFFFFFF55 : 0xFFFFFFFF;
+        String text = count + " blocks";
+
+        ScaledResolution resolution = new ScaledResolution(mc);
+        float x = resolution.getScaledWidth() / 2.0F - mc.fontRendererObj.getStringWidth(text) / 2.0F;
+        float y = resolution.getScaledHeight() / 2.0F + 8.0F;
+
+        mc.fontRendererObj.drawStringWithShadow(text, x, y, colour);
+    }
+}

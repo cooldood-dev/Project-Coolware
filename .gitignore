@@ -1,24 +1,7 @@
-# eclipse
-bin
-*.launch
-.settings
-.metadata
-.classpath
-.project
-
-# idea
-out
-*.ipr
-*.iws
+target/
+*.class
 *.iml
-.idea
-
-# gradle
-build
-.gradle
-
-# other
-eclipse
-run
-
-src/main/java/**/**/**/events/Bus.java
+.idea/
+.DS_Store
+proguard.jar
+run_obf.bat
